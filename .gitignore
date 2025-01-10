@@ -1,0 +1,10 @@
+data/
+downloads/
+logs/
+PythonRPA_robot/
+.idea/
+chrome-win64/
+__pycache__/
+venv/
+
+.env
