@@ -1,0 +1,10 @@
+[tool.ruff]
+exclude = [".venv", "venv", "pyproject.toml"]
+include = ["*.py"]
+src = ["src"]
+fix = true
+indent-width = 4
+line-length = 88
+
+[tool.ruff.lint]
+ignore = ["E402", "E203"]
