@@ -1,118 +1,102 @@
-import logging
-import re
-from dataclasses import dataclass
+import json
+import pickle
+from dataclasses import asdict, dataclass, field
+from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Generator, List, Optional
 
-from docx import Document
-from docx.document import Document as DocumentObject
-
-from src.edo import ProtocolIDs, SubsidyContract
-from src.utils.custom_list import CustomList
-from src.utils.office import Word, WordDocument
-
-
-@dataclass
-class RegexPatterns:
-    file_name: re.Pattern = re.compile(
-        r"((дог\w*.?.суб\w*.?)|(дс))",
-        re.IGNORECASE,
-    )
-    file_contents: re.Pattern = re.compile(
-        r"((бір бөлігін субсидиялау туралы)|(договор субсидирования))",
-        re.IGNORECASE,
-    )
-    protocol_id: re.Pattern = re.compile(r"№.?(\d{6})")
+HEADER_MAPPING = {
+    "contract_id": "contract_id",
+    "Рег.№": "reg_number",
+    "Тип договора": "contract_type",
+    "Состояние": "status",
+    "Дата создания": "creation_date",
+    "Сумма договорa числовое": "contract_amount_numeric",
+    "Рег. дата": "reg_date",
+    "Контрагент": "counterparty",
+    "Контрагенты все участники": "all_counterparties",
+    "Заемщик": "borrower",
+    "download_path": "download_path",
+}
 
 
-def open_document(file_path: Path) -> DocumentObject:
-    try:
-        doc = Document(str(file_path))
-    except KeyError:
-        logging.warning(f"Corrupted document. Attempting to re-save it...")
+@dataclass(slots=True)
+class SubsidyContract:
+    contract_id: str
+    reg_number: str
+    contract_type: str
+    status: str
+    creation_date: str
+    contract_amount_numeric: str
+    reg_date: str
+    counterparty: str
+    all_counterparties: str
+    borrower: str
+    download_path: str
+    save_folder: str
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    loan_amount: Optional[float] = None
+    protocol_ids: List[str] = field(default_factory=list)
+    ibans: List[str] = field(default_factory=list)
+    data: Dict[str, Any] = field(default_factory=dict)
 
-        _file_path = file_path
+    def to_dict(self) -> Dict[str, str]:
+        contract = asdict(self)
+        if isinstance(contract["start_date"], date):
+            contract["start_date"] = self.start_date.isoformat()
+        if isinstance(contract["end_date"], date):
+            contract["end_date"] = self.end_date.isoformat()
+        return contract
 
-        og_file_path = file_path.with_name(f"og_{_file_path.name}")
-        file_path.rename(og_file_path)
+    def save(self) -> None:
+        json_path = Path(self.save_folder) / "contract.json"
+        pkl_path = Path(self.save_folder) / "contract.pkl"
+        with json_path.open("w", encoding="utf-8") as f1, pkl_path.open("wb") as f2:
+            json.dump(self.to_dict(), f1, ensure_ascii=False, indent=2)
+            pickle.dump(self, f2)
 
-        copy_file_path = file_path.parent / f"copy_{_file_path.name}"
-        with Word() as word:
-            with WordDocument(word, og_file_path) as word_doc:
-                word_doc.save_as(copy_file_path, 16)
+    def __hash__(self) -> int:
+        return hash((self.contract_id, self.reg_number))
 
-        og_file_path.unlink()
-        copy_file_path.rename(_file_path)
-        file_path = _file_path
-        doc = Document(str(file_path))
+    @classmethod
+    def load(cls, folder: Path) -> Optional["SubsidyContract"]:
+        pkl_path = folder / "contract.pkl"
+        if pkl_path.exists():
+            with pkl_path.open("rb") as f:
+                contract: SubsidyContract = pickle.load(f)
+            return contract
 
-    return doc
+        json_path = folder / "contract.json"
+        if json_path.exists():
+            with json_path.open("r", encoding="utf-8") as f:
+                contract_data = json.load(f)
+            contract = SubsidyContract(**contract_data)
+            return contract
 
 
-class Paragraphs(CustomList[str]):
-    pass
+def contract_count(root_folder: Path) -> int:
+    return sum(1 for f in root_folder.iterdir() if f.is_dir())
 
 
-class SubsidyParser:
-    def __init__(
-        self, contract: SubsidyContract, regex_patterns: RegexPatterns
-    ) -> None:
-        self.contract_folder = Path(contract.save_location).parent
-        self.regex_patterns = regex_patterns
-        self.file_path: Optional[Path] = None
-        self._doc: Optional[DocumentObject] = None
-        self._paragraphs: Paragraphs = Paragraphs()
+def iter_contracts(
+    root_folder: Path,
+) -> Generator[Optional[SubsidyContract], None, None]:
+    for folder in root_folder.iterdir():
+        if not folder.is_dir():
+            continue
 
-    def find_subsidy_contact_file(self) -> Optional[Path]:
-        for file_path in self.contract_folder.iterdir():
-            self.file_path = file_path
-            if file_path.name.endswith("docx") and self.is_subsidy_contract_file(
-                file_path
-            ):
-                return self.file_path
-        self.file_path = None
-        return None
+        contract = SubsidyContract.load(folder)
+        yield contract
 
-    def is_subsidy_contract_file(self, file_path: Path) -> bool:
-        if self.regex_patterns.file_name.search(file_path.name):
-            return True
 
-        if self.regex_patterns.file_contents.search("\n".join(self.paragraphs[0:10])):
-            return True
-
-        self._paragraphs.clear()
-        self._doc = None
-        return False
-
-    @property
-    def doc(self) -> DocumentObject:
-        if not self._doc:
-            self._doc = open_document(self.file_path)
-            self._doc = Document(str(self.file_path))
-        return self._doc
-
-    @property
-    def paragraphs(self) -> Paragraphs:
-        if not self._paragraphs:
-            self._paragraphs = Paragraphs(
-                [
-                    text
-                    for para in self.doc.paragraphs
-                    if (text := re.sub(r"\s+", " ", para.text.lower()).strip())
-                ]
-            )
-        return self._paragraphs
-
-    def find_protocol_ids(self) -> ProtocolIDs:
-        protocol_ids = ProtocolIDs()
-        termin_para_idx = self.paragraphs.index(condition=lambda p: "термин" in p)
-
-        if not termin_para_idx:
-            logging.error(f"EDO - no protocol ids found...")
-            return protocol_ids
-
-        para = self.paragraphs[termin_para_idx - 1].split(";")[-1]
-
-        protocol_ids.items = self.regex_patterns.protocol_id.findall(para)
-
-        return protocol_ids
+def map_row_to_subsidy_contract(
+    contract_id: str, download_folder: Path, row: Dict[str, str]
+) -> SubsidyContract:
+    kwargs = {
+        HEADER_MAPPING[header]: value
+        for header, value in row.items()
+        if header in HEADER_MAPPING
+    }
+    kwargs["save_folder"] = (download_folder / contract_id).as_posix()
+    return SubsidyContract(contract_id=contract_id, **kwargs)

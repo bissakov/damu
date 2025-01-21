@@ -16,6 +16,48 @@ class LoginError(Exception):
     pass
 
 
+class ParseError(Exception):
+    pass
+
+
+class MismatchError(ParseError):
+    pass
+
+
+class InterestRateMismatchError(ParseError):
+    pass
+
+
+class InvalidColumnCount(ParseError):
+    pass
+
+
+class DateConversionError(ParseError):
+    pass
+
+
+class TableNotFound(ParseError):
+    def __init__(self, file_name: str, contract_id: str, target: str) -> None:
+        self.file_name = file_name
+        self.contract_id = contract_id
+        self.message = (
+            f"No tables in {file_name!r} of a {contract_id!r} for {target}..."
+        )
+        super().__init__(self.message)
+
+
+class ExcesssiveTableCountError(ParseError):
+    def __init__(self, file_name: str, contract_id: str, table_count: int) -> None:
+        self.file_name = file_name
+        self.contract_id = contract_id
+        self.table_count = table_count
+        self.message = (
+            f"Expecting to parse 1 or 2 tables, got "
+            f"{table_count} in {file_name!r} of a {contract_id!r}..."
+        )
+        super().__init__(self.message)
+
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -45,6 +87,38 @@ def retry(
                     remaining_tries -= 1
 
             return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def async_retry(
+    exceptions: Tuple[Type[Exception], ...],
+    tries: int = 3,
+    delay: float = 1.0,
+    backoff: float = 1.0,
+) -> Callable[[F], F]:
+    def decorator(func: F) -> F:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            nonlocal tries
+            remaining_tries = tries
+            current_delay = delay
+
+            while remaining_tries > 1:
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    logging.warning(
+                        f"Retrying {func.__name__} due to {e!r}. "
+                        f"Attempts left: {remaining_tries - 1}"
+                    )
+                    sleep(current_delay)
+                    current_delay *= backoff
+                    remaining_tries -= 1
+
+            return await func(*args, **kwargs)
 
         return wrapper
 

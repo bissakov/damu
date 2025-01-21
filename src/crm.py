@@ -1,10 +1,27 @@
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from src.error import LoginError, retry
 from src.utils.request_handler import RequestHandler
+
+
+@dataclass
+class Record:
+    record_name: str
+    value: str
+    display_value: str
+
+
+@dataclass
+class ProjectInfo:
+    project_id: str
+    customer: Record
+    bank: Record
+    project: Record
+    project_amount: float
 
 
 class Schemas:
@@ -41,7 +58,7 @@ class CRM(RequestHandler):
         schema_json_path: Path,
     ) -> None:
         super().__init__(user, password, base_url, download_folder)
-        self.session.headers = {
+        self.client.headers = {
             "accept": "application/json",
             "accept-language": "en-US,en;q=0.9",
             "content-type": "application/json",
@@ -60,6 +77,7 @@ class CRM(RequestHandler):
         }
 
         self.schemas = Schemas(schema_json_path)
+        self.is_logged_in = False
 
     @retry(exceptions=(LoginError,), tries=5, delay=5, backoff=5)
     def login(self) -> bool:
@@ -79,19 +97,24 @@ class CRM(RequestHandler):
             logging.error(
                 "Request failed while fetching '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies"
             )
+            self.is_logged_in = False
             return False
         logging.info(
             "Fetched '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies successfully"
         )
 
         logging.debug("Extracting 'BPMCSRF' token from cookies")
-        self.session.headers["BPMCSRF"] = self.session.cookies.get("BPMCSRF") or ""
+        self.client.headers["BPMCSRF"] = self.client.cookies.get("BPMCSRF") or ""
         logging.info("'BPMCSRF' token added to headers")
 
         logging.info("Login process completed successfully")
+        self.is_logged_in = True
         return True
 
-    def find_project(self, protocol_id: str) -> Tuple[bool, Optional[Dict[Any, Any]]]:
+    def find_project(self, protocol_id: str) -> Tuple[bool, Optional[ProjectInfo]]:
+        if not self.is_logged_in:
+            self.login()
+
         json_data = self.schemas.project_info(protocol_id)
 
         response = self.request(
@@ -100,16 +123,33 @@ class CRM(RequestHandler):
             json=json_data,
         )
         if not response:
+            self.is_logged_in = False
             return False, None
 
         if hasattr(response, "json"):
-            return True, response.json()
+            data = response.json()
+            rows = data.get("rows")
+            assert isinstance(rows, list)
+            row = rows[0]
+
+            project_info = ProjectInfo(
+                project_id=row.get("Id"),
+                customer=self.create_record(row=row, key="Customer"),
+                bank=self.create_record(row=row, key="BvuLk"),
+                project=self.create_record(row=row, key="Project"),
+                project_amount=row.get("ProjectAmount"),
+            )
+
+            return True, project_info
         else:
             return False, None
 
     def get_project_data(
         self, project_id: str
     ) -> Tuple[bool, Optional[Dict[Any, Any]]]:
+        if not self.is_logged_in:
+            self.login()
+
         json_data = self.schemas.project(project_id)
 
         response = self.request(
@@ -118,9 +158,22 @@ class CRM(RequestHandler):
             json=json_data,
         )
         if not response:
+            self.is_logged_in = False
             return False, None
 
         if hasattr(response, "json"):
-            return True, response.json()
+            data = response.json()
+            rows = data.get("rows")
+            assert isinstance(rows, list)
+            return True, rows[0]
         else:
             return False, None
+
+    @staticmethod
+    def create_record(row: dict, key: str) -> Record:
+        record_data = row.get(key, {})
+        return Record(
+            record_name=key,
+            value=record_data.get("value"),
+            display_value=record_data.get("displayValue"),
+        )
