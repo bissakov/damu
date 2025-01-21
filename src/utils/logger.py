@@ -30,7 +30,7 @@ def setup_logger(project_root: Path, today: date) -> Path:
     log_folder.mkdir(exist_ok=True)
 
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     log_format = (
         "[%(asctime)s] %(levelname)-7s %(filename)s:%(funcName)s:%(lineno)s %(message)s"

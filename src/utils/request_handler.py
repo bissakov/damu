@@ -69,7 +69,7 @@ class RequestHandler:
             logging.debug(f"Updating cookies with response from {path!r}")
             self.update_cookies(response.cookies)
 
-        logging.debug(f"SUCCESS - {method.upper()} {response.status_code} to {path!r}")
+        logging.debug(f"{method.upper()} {response.status_code} to {path!r}")
         return response
 
     def request(

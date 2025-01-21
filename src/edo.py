@@ -5,13 +5,13 @@ import random
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import aiofiles
 from bs4 import BeautifulSoup
 
 from src.error import LoginError, retry
-from src.subsidy import iter_contracts, map_row_to_subsidy_contract
+from src.subsidy import contract_count, iter_contracts, map_row_to_subsidy_contract
 from src.utils.collections import batched
 from src.utils.request_handler import RequestHandler
 
@@ -318,7 +318,7 @@ class EDO(RequestHandler):
 
     async def process_batch(
         self, batch: Tuple[Tuple[str, str], ...]
-    ) -> Tuple[Tuple[bool, str, Path, Optional[Path]]]:
+    ) -> List[Tuple[bool, str, Path, Optional[Path]]]:
         tasks = []
         for save_folder, download_path in batch:
             save_folder = Path(save_folder)
@@ -335,6 +335,9 @@ class EDO(RequestHandler):
     async def mass_download_async(self, batch_size: int = 10) -> None:
         filtered_data = set()
         for contract in iter_contracts(self.download_folder):
+            if not contract:
+                continue
+
             save_folder = Path(contract.save_folder)
             save_folder.mkdir(exist_ok=True)
             documents_folder = save_folder / "documents"
@@ -366,7 +369,7 @@ class EDO(RequestHandler):
                             )
                         )
                         continue
-                    logging.info(f"EDO - SUCCESS - {jdx:02}/{len(batch)}")
+                    logging.info(f"EDO - {jdx:02}/{len(batch)}")
 
             results = await asyncio.gather(*undone_tasks)
             for status, save_folder, path in results:
@@ -375,14 +378,15 @@ class EDO(RequestHandler):
                     continue
 
     def mass_download(self, max_page: int) -> None:
-        for page in range(max_page):
-            logging.info(f"Page {page + 1}/{max_page}")
-            if not self.get_contracts(page=page, ascending=False):
-                logging.warning("Robot is not logged in to the EDO...")
-                raise Exception("Robot is not logged in to the EDO...")
+        # for page in range(max_page):
+        #     logging.info(f"Page {page + 1}/{max_page}")
+        #     if not self.get_contracts(page=page, ascending=False):
+        #         logging.warning("Robot is not logged in to the EDO...")
+        #         raise Exception("Robot is not logged in to the EDO...")
 
-        # contract_count = len(contracts)
-        # logging.info(f"Preparing to download {contract_count} archives...")
+        logging.info(
+            f"Preparing to download {contract_count(self.download_folder)} archives..."
+        )
 
         asyncio.run(self.mass_download_async(batch_size=50))
 

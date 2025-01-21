@@ -9,12 +9,9 @@ HEADER_MAPPING = {
     "contract_id": "contract_id",
     "Рег.№": "reg_number",
     "Тип договора": "contract_type",
-    "Состояние": "status",
     "Дата создания": "creation_date",
     "Сумма договорa числовое": "contract_amount_numeric",
     "Рег. дата": "reg_date",
-    "Контрагент": "counterparty",
-    "Контрагенты все участники": "all_counterparties",
     "Заемщик": "borrower",
     "download_path": "download_path",
 }
@@ -25,20 +22,17 @@ class SubsidyContract:
     contract_id: str
     reg_number: str
     contract_type: str
-    status: str
     creation_date: str
     contract_amount_numeric: str
     reg_date: str
-    counterparty: str
-    all_counterparties: str
     borrower: str
     download_path: str
     save_folder: str
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     loan_amount: Optional[float] = None
+    iban: Optional[str] = None
     protocol_ids: List[str] = field(default_factory=list)
-    ibans: List[str] = field(default_factory=list)
     data: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, str]:
@@ -50,8 +44,11 @@ class SubsidyContract:
         return contract
 
     def save(self) -> None:
-        json_path = Path(self.save_folder) / "contract.json"
-        pkl_path = Path(self.save_folder) / "contract.pkl"
+        save_folder = Path(self.save_folder)
+        save_folder.mkdir(exist_ok=True)
+
+        json_path = save_folder / "contract.json"
+        pkl_path = save_folder / "contract.pkl"
         with json_path.open("w", encoding="utf-8") as f1, pkl_path.open("wb") as f2:
             json.dump(self.to_dict(), f1, ensure_ascii=False, indent=2)
             pickle.dump(self, f2)
@@ -70,7 +67,7 @@ class SubsidyContract:
         json_path = folder / "contract.json"
         if json_path.exists():
             with json_path.open("r", encoding="utf-8") as f:
-                contract_data = json.load(f)
+                contract_data: Dict[str, Any] = json.load(f)
             contract = SubsidyContract(**contract_data)
             return contract
 

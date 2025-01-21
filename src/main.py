@@ -56,7 +56,7 @@ def main():
 
     with edo, crm:
         # edo.mass_download(max_page=20)
-        parse_documents(download_folder, patterns)
+        errors = parse_documents(download_folder, patterns)
 
         # for contract in contracts:
         #     contract.data = dict()

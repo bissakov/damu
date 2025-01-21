@@ -36,6 +36,14 @@ class DateConversionError(ParseError):
     pass
 
 
+class DateNotFoundError(ParseError):
+    def __init__(self, file_name: str, contract_id: str, para: str) -> None:
+        self.file_name = file_name
+        self.contract_id = contract_id
+        self.message = f"No dates in {file_name!r} of a {contract_id!r} for {para}..."
+        super().__init__(self.message)
+
+
 class TableNotFound(ParseError):
     def __init__(self, file_name: str, contract_id: str, target: str) -> None:
         self.file_name = file_name
@@ -56,6 +64,10 @@ class ExcesssiveTableCountError(ParseError):
             f"{table_count} in {file_name!r} of a {contract_id!r}..."
         )
         super().__init__(self.message)
+
+
+class DataFrameInequalityError(ParseError):
+    pass
 
 
 F = TypeVar("F", bound=Callable[..., Any])
