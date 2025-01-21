@@ -6,5 +6,8 @@ PythonRPA_robot/
 chrome-win64/
 __pycache__/
 venv/
+.ruff_cache/
+.git/
+unused/
 
 .env
