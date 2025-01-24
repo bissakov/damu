@@ -3,22 +3,25 @@ import logging
 import math
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import aiofiles
 from bs4 import BeautifulSoup
 
 from src.error import LoginError, retry
-from src.subsidy import contract_count, iter_contracts, map_row_to_subsidy_contract
+from src.subsidy import SubsidyContract, iter_contracts, map_row_to_subsidy_contract
 from src.utils.collections import batched
+from src.utils.db_manager import DatabaseManager
 from src.utils.request_handler import RequestHandler
+from src.utils.utils import safe_extract
 
 
 class EDO(RequestHandler):
     def __init__(
         self,
+        db: DatabaseManager,
         user: str,
         password: str,
         base_url: str,
@@ -26,6 +29,8 @@ class EDO(RequestHandler):
         user_agent: str,
     ) -> None:
         super().__init__(user, password, base_url, download_folder)
+
+        self.db = db
         self.update_headers(
             {
                 "accept-language": "en-US,en;q=0.9",
@@ -149,7 +154,9 @@ class EDO(RequestHandler):
 
         return True, int(row_count)
 
-    def parse_table_rows(self, soup: BeautifulSoup) -> None:
+    def parse_table_rows(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
+        edo_contracts: List[Dict[str, str]] = []
+
         headers = [
             (idx, text)
             for idx, el in enumerate(soup.select("tr.title > td"))
@@ -175,8 +182,20 @@ class EDO(RequestHandler):
             contract = map_row_to_subsidy_contract(
                 contract_id, self.download_folder, row
             )
-            contract.save()
+            edo_contracts.append(
+                {
+                    "id": contract.contract_id,
+                    "reg_number": contract.reg_number,
+                    "contract_type": contract.contract_type,
+                    "reg_date": contract.reg_date,
+                    "download_path": contract.download_path,
+                    "save_folder": contract.save_folder,
+                    "date_modified": datetime.now().isoformat(),
+                }
+            )
             row_idx += 1
+
+        return edo_contracts
 
     def get_contracts(
         self, page: Union[int, str], ascending: bool, current_retry: int = 0
@@ -245,7 +264,18 @@ class EDO(RequestHandler):
             )
             return res
 
-        self.parse_table_rows(soup)
+        edo_contracts = self.parse_table_rows(soup)
+
+        self.db.execute_many(
+            """
+            INSERT OR REPLACE INTO edo_contracts
+                (id, reg_number, contract_type, reg_date, download_path, save_folder, date_modified)
+            VALUES
+                (:id, :reg_number, :contract_type, :reg_date, :download_path, :save_folder, :date_modified)
+            """,
+            edo_contracts,
+        )
+
         return True
 
     def download_file(self, contact_save_folder: Path, path: str) -> bool:
@@ -333,12 +363,15 @@ class EDO(RequestHandler):
         return await asyncio.gather(*tasks)
 
     async def mass_download_async(self, batch_size: int = 10) -> None:
-        filtered_data = set()
-        for contract in iter_contracts(self.download_folder):
-            if not contract:
-                continue
+        query = """
+            SELECT save_folder, download_path FROM edo_contracts
+            WHERE DATE(date_modified) = ?
+        """
+        contracts = self.db.execute(query, (date.today().isoformat(),))
 
-            save_folder = Path(contract.save_folder)
+        filtered_data = set()
+        for save_folder, download_path in contracts:
+            save_folder = Path(save_folder)
             save_folder.mkdir(exist_ok=True)
             documents_folder = save_folder / "documents"
             documents_folder.mkdir(exist_ok=True)
@@ -348,7 +381,13 @@ class EDO(RequestHandler):
                 archive_path.exists() and not archive_path.stat().st_size == 0
             ) or documents_folder.stat().st_size != 0:
                 continue
-            filtered_data.add((contract.save_folder, contract.download_path))
+            filtered_data.add((save_folder, download_path))
+
+        if len(filtered_data) == 0:
+            logging.info(f"Nothing to download...")
+            return
+
+        logging.info(f"Preparing to download {len(filtered_data)} archives...")
 
         batches = batched(filtered_data, batch_size)
         batch_count = math.ceil(len(filtered_data) / batch_size)
@@ -377,16 +416,18 @@ class EDO(RequestHandler):
                     logging.error(f"Was unable to download {path!r}")
                     continue
 
-    def mass_download(self, max_page: int) -> None:
-        # for page in range(max_page):
-        #     logging.info(f"Page {page + 1}/{max_page}")
-        #     if not self.get_contracts(page=page, ascending=False):
-        #         logging.warning("Robot is not logged in to the EDO...")
-        #         raise Exception("Robot is not logged in to the EDO...")
+                save_folder = Path(save_folder)
+                documents_folder = save_folder / "documents"
+                safe_extract(
+                    save_folder / "contract.zip", documents_folder=documents_folder
+                )
 
-        logging.info(
-            f"Preparing to download {contract_count(self.download_folder)} archives..."
-        )
+    def mass_download(self, max_page: int) -> None:
+        for page in range(max_page):
+            logging.info(f"Page {page + 1}/{max_page}")
+            if not self.get_contracts(page=page, ascending=False):
+                logging.warning("Robot is not logged in to the EDO...")
+                raise Exception("Robot is not logged in to the EDO...")
 
         asyncio.run(self.mass_download_async(batch_size=50))
 
