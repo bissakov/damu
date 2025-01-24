@@ -42,7 +42,7 @@ def select_one(root: Union[BeautifulSoup, Tag], selector: str) -> Tag:
     return result
 
 
-def safe_extract(archive_path: Path, extract_folder: Path) -> None:
+def safe_extract(archive_path: Path, documents_folder: Path) -> None:
     try:
         archive = zipfile.ZipFile(archive_path, "r")
     except zipfile.BadZipfile as err:
@@ -59,7 +59,7 @@ def safe_extract(archive_path: Path, extract_folder: Path) -> None:
             normalized_file_name = file_name.encode("ibm437").decode("cp866")
             normalized_file_name = re.sub(r"\s+", " ", normalized_file_name)
             normalized_file_name = normalized_file_name.replace("?", "").strip()
-            extract_path = extract_folder / normalized_file_name
+            extract_path = documents_folder / normalized_file_name
 
             try:
                 with archive.open(file) as source, open(extract_path, "wb") as dest:

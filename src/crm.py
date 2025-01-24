@@ -8,14 +8,13 @@ from src.error import LoginError, retry
 from src.utils.request_handler import RequestHandler
 
 
-@dataclass
+@dataclass(slots=True)
 class Record:
-    record_name: str
     value: str
     display_value: str
 
 
-@dataclass
+@dataclass(slots=True)
 class ProjectInfo:
     project_id: str
     customer: Record
@@ -129,7 +128,10 @@ class CRM(RequestHandler):
         if hasattr(response, "json"):
             data = response.json()
             rows = data.get("rows")
-            assert isinstance(rows, list)
+
+            if not isinstance(rows, list) or not rows:
+                return False, None
+
             row = rows[0]
 
             project_info = ProjectInfo(
@@ -173,7 +175,6 @@ class CRM(RequestHandler):
     def create_record(row: dict, key: str) -> Record:
         record_data = row.get(key, {})
         return Record(
-            record_name=key,
             value=record_data.get("value"),
             display_value=record_data.get("displayValue"),
         )

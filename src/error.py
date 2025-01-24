@@ -2,6 +2,7 @@ import logging
 import os
 import traceback
 from functools import wraps
+from pathlib import Path
 from time import sleep
 from typing import Any, Callable, Optional, Tuple, Type, TypeVar
 
@@ -16,7 +17,19 @@ class LoginError(Exception):
     pass
 
 
+def format_error(err: Exception) -> str:
+    stack = traceback.extract_stack(limit=2)[0]
+    filename = Path(stack.filename).name
+    line_number = stack.lineno
+
+    return f"{err.__class__.__name__}({err} {filename}:{line_number})\n"
+
+
 class ParseError(Exception):
+    pass
+
+
+class ContractsNofFoundError(Exception):
     pass
 
 

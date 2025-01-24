@@ -134,9 +134,9 @@ class RequestHandler:
 
     def __exit__(
         self,
-        exc_type: Type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
     ):
         if exc_val is not None or exc_type is not None or exc_tb is not None:
             pass
