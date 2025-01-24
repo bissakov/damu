@@ -12,3 +12,4 @@ unused/
 
 *.zip
 .env
+*.db
