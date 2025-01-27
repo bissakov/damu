@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 from typing import Union
 
+import pandas as pd
 import psutil
 from bs4 import BeautifulSoup, Tag
 
@@ -33,7 +34,7 @@ def get_from_env(key: str) -> str:
 def select_one(root: Union[BeautifulSoup, Tag], selector: str) -> Tag:
     match = root.select(selector)
     if not match:
-        warning_msg = f"WARNING - {selector=} was not found..."
+        warning_msg = f"{selector=} was not found..."
         logging.warning(warning_msg)
         raise HTMLElementNotFound(warning_msg)
 
@@ -41,18 +42,24 @@ def select_one(root: Union[BeautifulSoup, Tag], selector: str) -> Tag:
     return result
 
 
-def safe_extract(archive_path: Path, extract_folder: Path) -> None:
-    with zipfile.ZipFile(archive_path, "r") as archive:
+def safe_extract(archive_path: Path, documents_folder: Path) -> None:
+    try:
+        archive = zipfile.ZipFile(archive_path, "r")
+    except zipfile.BadZipfile as err:
+        logging.error(f"{archive_path.as_posix()!r} - {err!r}")
+        return
+
+    with archive:
         for file in archive.namelist():
             file_path = Path(file)
             file_name = file_path.name
-            if not file_name.endswith(".docx"):
+            if not file_name.endswith(".docx") and not file_name.endswith(".DOCX"):
                 continue
 
             normalized_file_name = file_name.encode("ibm437").decode("cp866")
             normalized_file_name = re.sub(r"\s+", " ", normalized_file_name)
             normalized_file_name = normalized_file_name.replace("?", "").strip()
-            extract_path = extract_folder / normalized_file_name
+            extract_path = documents_folder / normalized_file_name
 
             try:
                 with archive.open(file) as source, open(extract_path, "wb") as dest:
@@ -60,3 +67,32 @@ def safe_extract(archive_path: Path, extract_folder: Path) -> None:
             except OSError as err:
                 logging.error(err)
                 raise err
+
+
+def normalize_text(text: str) -> str:
+    new_text = text.lower().strip().split("/")[0]
+    new_text = new_text.replace("i", "і")
+    new_text = re.sub(r"\s{2,}", " ", new_text)
+    new_text = re.sub(r"[^\w\s/№]", "", new_text)
+    return new_text
+
+
+def compare(df1: pd.DataFrame, df2: pd.DataFrame) -> bool:
+    if (
+        (df1.empty and df2.empty)
+        or (df1.empty and not df2.empty)
+        or (df2.empty and not df1.empty)
+    ):
+        return True
+
+    if len(df1) != len(df2):
+        return False
+
+    return next(
+        (
+            False
+            for idx in df1.index[~df1["total"]]
+            if not df1.loc[idx].equals(df2.loc[idx])
+        ),
+        True,
+    )

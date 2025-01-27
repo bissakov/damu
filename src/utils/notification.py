@@ -1,7 +1,7 @@
 import io
 import logging
 import urllib.parse
-from typing import cast
+from typing import List, cast
 
 import PIL.Image as Image
 import PIL.ImageGrab as ImageGrab
@@ -11,12 +11,7 @@ from requests import HTTPError
 from requests.exceptions import SSLError
 
 from src.error import retry
-from src.utils.custom_list import CustomList
 from src.utils.utils import get_from_env
-
-
-class Messages(CustomList[str]):
-    pass
 
 
 class TelegramAPI:
@@ -26,7 +21,7 @@ class TelegramAPI:
         self.token, self.chat_id = get_from_env("TOKEN"), get_from_env("CHAT_ID")
         self.api_url = f"https://api.telegram.org/bot{self.token}/"
 
-        self.pending_messages: Messages = Messages()
+        self.pending_messages: List[str] = []
 
     def reload_session(self) -> None:
         self.session = requests.Session()

@@ -1,10 +1,30 @@
 import json
 import logging
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from src.error import LoginError, retry
+from src.subsidy import Bank, CrmContract
+from src.utils.db_manager import DatabaseManager
 from src.utils.request_handler import RequestHandler
+
+
+@dataclass(slots=True)
+class Record:
+    value: str
+    display_value: str
+
+
+@dataclass(slots=True)
+class ProjectInfo:
+    project_id: str
+    bank: str
+    bank_id: str
+    project: str
+    customer: str
+    customer_id: str
 
 
 class Schemas:
@@ -41,7 +61,7 @@ class CRM(RequestHandler):
         schema_json_path: Path,
     ) -> None:
         super().__init__(user, password, base_url, download_folder)
-        self.session.headers = {
+        self.client.headers = {
             "accept": "application/json",
             "accept-language": "en-US,en;q=0.9",
             "content-type": "application/json",
@@ -60,6 +80,7 @@ class CRM(RequestHandler):
         }
 
         self.schemas = Schemas(schema_json_path)
+        self.is_logged_in = False
 
     @retry(exceptions=(LoginError,), tries=5, delay=5, backoff=5)
     def login(self) -> bool:
@@ -79,19 +100,24 @@ class CRM(RequestHandler):
             logging.error(
                 "Request failed while fetching '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies"
             )
+            self.is_logged_in = False
             return False
         logging.info(
             "Fetched '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies successfully"
         )
 
         logging.debug("Extracting 'BPMCSRF' token from cookies")
-        self.session.headers["BPMCSRF"] = self.session.cookies.get("BPMCSRF") or ""
+        self.client.headers["BPMCSRF"] = self.client.cookies.get("BPMCSRF") or ""
         logging.info("'BPMCSRF' token added to headers")
 
         logging.info("Login process completed successfully")
+        self.is_logged_in = True
         return True
 
-    def find_project(self, protocol_id: str) -> Tuple[bool, Optional[Dict[Any, Any]]]:
+    def find_project(self, protocol_id: str) -> Tuple[bool, Optional[ProjectInfo]]:
+        if not self.is_logged_in:
+            self.login()
+
         json_data = self.schemas.project_info(protocol_id)
 
         response = self.request(
@@ -100,16 +126,37 @@ class CRM(RequestHandler):
             json=json_data,
         )
         if not response:
+            self.is_logged_in = False
             return False, None
 
         if hasattr(response, "json"):
-            return True, response.json()
+            data = response.json()
+            rows = data.get("rows")
+
+            if not isinstance(rows, list) or not rows:
+                return False, None
+
+            row = rows[0]
+
+            project_info = ProjectInfo(
+                project_id=row.get("Id"),
+                bank=(row.get("BvuLk") or {}).get("displayValue"),
+                bank_id=(row.get("BvuLk") or {}).get("value"),
+                project=(row.get("Project") or {}).get("displayValue"),
+                customer=(row.get("Customer") or {}).get("displayValue"),
+                customer_id=(row.get("Customer") or {}).get("value"),
+            )
+
+            return True, project_info
         else:
             return False, None
 
     def get_project_data(
         self, project_id: str
     ) -> Tuple[bool, Optional[Dict[Any, Any]]]:
+        if not self.is_logged_in:
+            self.login()
+
         json_data = self.schemas.project(project_id)
 
         response = self.request(
@@ -118,9 +165,85 @@ class CRM(RequestHandler):
             json=json_data,
         )
         if not response:
+            self.is_logged_in = False
             return False, None
 
         if hasattr(response, "json"):
-            return True, response.json()
+            data = response.json()
+            rows = data.get("rows")
+            assert isinstance(rows, list)
+            return True, rows[0]
         else:
             return False, None
+
+    @staticmethod
+    def create_record(row: dict, key: str) -> Record:
+        record_data = row.get(key, {})
+        return Record(
+            value=record_data.get("value"),
+            display_value=record_data.get("displayValue"),
+        )
+
+
+def fetch_crm_data(crm: CRM, db: DatabaseManager, banks_json_path: Path) -> None:
+    with banks_json_path.open("r", encoding="utf-8") as f:
+        banks = json.load(f)
+
+    contracts = db.execute(
+        "SELECT protocol_id, contract_id FROM protocol_ids WHERE DATE(date_modified) = ? AND newest IS TRUE",
+        (date.today().isoformat(),),
+    )
+
+    count = len(contracts)
+    for idx, (protocol_id, contract_id) in enumerate(contracts, start=1):
+        crm_contract = CrmContract(contract_id)
+
+        if (
+            crm_contract.project_id
+            and crm_contract.bank_id
+            and crm_contract.project
+            and crm_contract.customer
+            and crm_contract.customer_id
+        ):
+            continue
+
+        logging.info(f"CRM - {idx:02}/{count} - {contract_id}")
+
+        status, project_info = crm.find_project(protocol_id=protocol_id)
+        if not status:
+            logging.error(f"CRM - ERROR - {protocol_id=}")
+            continue
+        logging.info(f"CRM - SUCCESS - {protocol_id=}")
+
+        bank = Bank(
+            bank_id=project_info.bank_id,
+            bank=project_info.bank,
+            year_count=banks.get(project_info.bank_id),
+        )
+
+        crm_contract.project_id = project_info.project_id
+        crm_contract.bank_id = project_info.bank_id
+        crm_contract.project = project_info.project
+        crm_contract.customer = project_info.customer
+        crm_contract.customer_id = project_info.customer_id
+
+        # row = dict()
+        # for protocol_id in contract.protocol_ids:
+        #     status, project_info = crm.find_project(protocol_id=protocol_id)
+        #     if not status:
+        #         logging.error(f"CRM - ERROR - {protocol_id=}")
+        #         continue
+        #     logging.info(f"CRM - SUCCESS - {protocol_id=}")
+        #
+        #     row["project_info"] = project_info
+        #
+        #     # status, project = crm.get_project_data(project_info.project_id)
+        #     # if not status:
+        #     #     logging.error(f"CRM - ERROR - {project_info.project_id=}")
+        #     #     continue
+        #     # logging.info(f"CRM - SUCCESS - {project_info.project_id=}")
+        #     # row["project"] = project
+        #     contract.data[protocol_id] = row
+
+        crm_contract.save(db)
+        bank.save(db)

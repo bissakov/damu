@@ -1,5 +1,5 @@
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -24,7 +24,7 @@ class CustomHighlighter(ReprHighlighter):
 
 
 def setup_logger(project_root: Path, today: date) -> Path:
-    logging.Formatter.converter = lambda *args: today.timetuple()
+    logging.Formatter.converter = lambda *args: datetime.now().timetuple()
 
     log_folder = project_root / "logs"
     log_folder.mkdir(exist_ok=True)
@@ -32,7 +32,9 @@ def setup_logger(project_root: Path, today: date) -> Path:
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    log_format = "[%(asctime)s] %(levelname)-7s %(message)-130s %(filename)s:%(funcName)s:%(lineno)s"
+    log_format = (
+        "[%(asctime)s] %(levelname)-7s %(filename)s:%(funcName)s:%(lineno)s %(message)s"
+    )
     formatter = logging.Formatter(log_format, datefmt="%H:%M:%S")
 
     today_str = today.strftime("%d.%m.%y")
@@ -48,13 +50,12 @@ def setup_logger(project_root: Path, today: date) -> Path:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
     logger.addHandler(file_handler)
 
-    # os.system("mode con: cols=264 lines=264")
-
     rich_console = Console(
-        width=255,
         soft_wrap=False,
         tab_size=2,
     )
