@@ -13,3 +13,4 @@ unused/
 *.zip
 .env
 *.db
+*.sqlite
