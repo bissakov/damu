@@ -3,18 +3,9 @@ import pickle
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple, Union
+from typing import Any, Dict, Generator, List, Optional, Union
 
-from src.utils.collections import batched
 from src.utils.db_manager import DatabaseManager
-
-HEADER_MAPPING = {
-    "contract_id": "contract_id",
-    "Рег.№": "reg_number",
-    "Тип договора": "contract_type",
-    "Рег. дата": "reg_date",
-    "download_path": "download_path",
-}
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -29,6 +20,7 @@ class CustomJSONEncoder(json.JSONEncoder):
 @dataclass(slots=True)
 class InterestRate:
     rate: float
+    contract_id: str
     start_date: Optional[Union[date, str]] = None
     end_date: Optional[Union[date, str]] = None
 
@@ -56,11 +48,88 @@ class InterestRate:
 
         return self.start_date >= other.start_date and self.end_date >= other.end_date
 
+    def to_json(self) -> Dict[str, Union[str, float, None]]:
+        return {
+            "rate": self.rate,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "contract_id": self.contract_id,
+            "date_modified": datetime.now().isoformat(),
+        }
+
+    def save(self, db: DatabaseManager) -> None:
+        query = """
+        INSERT OR REPLACE INTO interest_rates
+            (rate, start_date, end_date, contract_id, date_modified)
+        VALUES
+            (:rate, :start_date, :end_date, :contract_id, :date_modified)
+        """
+        db.execute(query, self.to_json())
+
+
+@dataclass(slots=True)
+class ProtocolID:
+    protocol_id: str
+    contract_id: str
+    newest: bool = False
+
+    def to_json(self) -> Dict[str, Union[str, float, None]]:
+        return {
+            "protocol_id": self.protocol_id,
+            "contract_id": self.contract_id,
+            "newest": self.newest,
+            "date_modified": datetime.now().isoformat(),
+        }
+
+    def save(self, db: DatabaseManager) -> None:
+        query = """
+        INSERT OR REPLACE INTO protocol_ids
+            (protocol_id, contract_id, newest, date_modified)
+        VALUES
+            (:protocol_id, :contract_id, :newest, :date_modified)
+        """
+        db.execute(query, self.to_json())
+
 
 @dataclass(slots=True)
 class Record:
     value: str
     display_value: str
+
+
+@dataclass(slots=True)
+class EdoContract:
+    contract_id: str
+    reg_number: str
+    contract_type: str
+    reg_date: date
+    download_path: str
+    save_folder: str
+
+    def __hash__(self) -> int:
+        return hash((self.contract_id,))
+
+    def to_json(self) -> Dict[str, Union[str, float, None]]:
+        return {
+            "id": self.contract_id,
+            "reg_number": self.reg_number,
+            "contract_type": self.contract_type,
+            "reg_date": self.reg_date,
+            "download_path": self.download_path,
+            "save_folder": self.save_folder,
+            "date_modified": datetime.now().isoformat(),
+        }
+
+    def save(self, db: DatabaseManager) -> None:
+        query = """
+            INSERT OR REPLACE INTO edo_contracts
+                (id, reg_number, contract_type, reg_date, 
+                download_path, save_folder, date_modified)
+            VALUES
+                (:id, :reg_number, :contract_type, :reg_date, 
+                :download_path, :save_folder, :date_modified)
+        """
+        db.execute(query, self.to_json())
 
 
 @dataclass(slots=True)
@@ -70,12 +139,89 @@ class ParseContract:
     end_date: Optional[date] = None
     loan_amount: Optional[float] = None
     iban: Optional[str] = None
-    protocol_ids: List[str] = field(default_factory=list)
-    interest_rates: List[InterestRate] = field(default_factory=list)
     error: Optional[str] = None
 
     def __hash__(self) -> int:
         return hash((self.contract_id,))
+
+    def to_json(self) -> Dict[str, Union[str, float, None]]:
+        return {
+            "id": self.contract_id,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "loan_amount": self.loan_amount,
+            "iban": json.dumps(self.iban),
+            "error": self.error,
+            "date_modified": datetime.now().isoformat(),
+        }
+
+    def save(self, db: DatabaseManager) -> None:
+        query = """
+        INSERT OR REPLACE INTO parse_contracts
+            (id, start_date, end_date, loan_amount, iban, error, date_modified)
+        VALUES
+            (:id, :start_date, :end_date, :loan_amount, :iban, :error, :date_modified)
+        """
+        db.execute(query, self.to_json())
+
+
+@dataclass(slots=True)
+class Bank:
+    bank_id: str
+    bank: str
+    year_count: Optional[int]
+
+    def __hash__(self) -> int:
+        return hash((self.bank_id,))
+
+    def to_json(self) -> Dict[str, Union[str, float, None]]:
+        return {
+            "bank_id": self.bank_id,
+            "bank": self.bank,
+            "year_count": self.year_count,
+        }
+
+    def save(self, db: DatabaseManager) -> None:
+        query = """
+        INSERT OR REPLACE INTO banks (bank_id, bank, year_count)
+        VALUES (:bank_id, :bank, :year_count)
+        """
+        db.execute(query, self.to_json())
+
+
+@dataclass(slots=True)
+class CrmContract:
+    contract_id: str
+    project_id: Optional[str] = None
+    project: Optional[str] = None
+    customer: Optional[str] = None
+    customer_id: Optional[str] = None
+    bank_id: Optional[str] = None
+
+    def __hash__(self) -> int:
+        return hash((self.contract_id,))
+
+    def to_json(self) -> Dict[str, Union[str, float, None]]:
+        return {
+            "id": self.contract_id,
+            "project_id": self.project_id,
+            "project": self.project,
+            "customer": self.customer,
+            "customer_id": self.customer_id,
+            "bank_id": self.bank_id,
+            "date_modified": datetime.now().isoformat(),
+        }
+
+    def save(self, db: DatabaseManager) -> None:
+        query = """
+        INSERT OR REPLACE INTO crm_contracts
+            (id, project_id, project, customer, 
+            customer_id, bank_id, date_modified)
+        VALUES
+            (:id, :project_id, :project, :customer, 
+            :customer_id, :bank_id, :date_modified)
+        """
+        db.execute(query, self.to_json())
 
 
 @dataclass(slots=True)
@@ -173,29 +319,3 @@ def iter_contracts(
             contract: SubsidyContract = SubsidyContract(**contract_data)
 
         yield contract
-
-
-def iter_contracts_batched(
-    db: DatabaseManager, batch_size: int = 10
-) -> Generator[Tuple, None, None]:
-    query = """
-        SELECT contract, json FROM contracts
-        WHERE DATE(date_modified) = ? AND error IS NULL
-    """
-    contracts = db.execute(query, (date.today().isoformat(),))
-    batches = batched(contracts, batch_size)
-
-    for batch in batches:
-        yield batch
-
-
-def map_row_to_subsidy_contract(
-    contract_id: str, download_folder: Path, row: Dict[str, str]
-) -> SubsidyContract:
-    kwargs = {
-        HEADER_MAPPING[header]: value
-        for header, value in row.items()
-        if header in HEADER_MAPPING
-    }
-    kwargs["save_folder"] = (download_folder / contract_id).as_posix()
-    return SubsidyContract(contract_id=contract_id, **kwargs)

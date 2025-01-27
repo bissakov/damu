@@ -5,13 +5,13 @@ import random
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import aiofiles
 from bs4 import BeautifulSoup
 
 from src.error import LoginError, retry
-from src.subsidy import SubsidyContract, iter_contracts, map_row_to_subsidy_contract
+from src.subsidy import EdoContract
 from src.utils.collections import batched
 from src.utils.db_manager import DatabaseManager
 from src.utils.request_handler import RequestHandler
@@ -154,9 +154,7 @@ class EDO(RequestHandler):
 
         return True, int(row_count)
 
-    def parse_table_rows(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
-        edo_contracts: List[Dict[str, str]] = []
-
+    def parse_table_rows(self, soup: BeautifulSoup) -> None:
         headers = [
             (idx, text)
             for idx, el in enumerate(soup.select("tr.title > td"))
@@ -176,26 +174,19 @@ class EDO(RequestHandler):
 
             anchor = current_row.select_one(selector="td.document_extra_info > div > a")
             row["download_path"] = anchor.get("href")
-
             contract_id = row["download_path"].split("/")[-1]
 
-            contract = map_row_to_subsidy_contract(
-                contract_id, self.download_folder, row
+            contract = EdoContract(
+                contract_id=contract_id,
+                reg_number=row["Рег.№"],
+                contract_type=row["Тип договора"],
+                reg_date=datetime.strptime(row["Рег. дата"], "%d.%m.%Y").date(),
+                download_path=row["download_path"],
+                save_folder=(self.download_folder / contract_id).as_posix(),
             )
-            edo_contracts.append(
-                {
-                    "id": contract.contract_id,
-                    "reg_number": contract.reg_number,
-                    "contract_type": contract.contract_type,
-                    "reg_date": contract.reg_date,
-                    "download_path": contract.download_path,
-                    "save_folder": contract.save_folder,
-                    "date_modified": datetime.now().isoformat(),
-                }
-            )
-            row_idx += 1
+            contract.save(self.db)
 
-        return edo_contracts
+            row_idx += 1
 
     def get_contracts(
         self, page: Union[int, str], ascending: bool, current_retry: int = 0
@@ -264,17 +255,7 @@ class EDO(RequestHandler):
             )
             return res
 
-        edo_contracts = self.parse_table_rows(soup)
-
-        self.db.execute_many(
-            """
-            INSERT OR REPLACE INTO edo_contracts
-                (id, reg_number, contract_type, reg_date, download_path, save_folder, date_modified)
-            VALUES
-                (:id, :reg_number, :contract_type, :reg_date, :download_path, :save_folder, :date_modified)
-            """,
-            edo_contracts,
-        )
+        self.parse_table_rows(soup)
 
         return True
 

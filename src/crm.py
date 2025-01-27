@@ -1,10 +1,13 @@
 import json
 import logging
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from src.error import LoginError, retry
+from src.subsidy import Bank, CrmContract
+from src.utils.db_manager import DatabaseManager
 from src.utils.request_handler import RequestHandler
 
 
@@ -17,10 +20,11 @@ class Record:
 @dataclass(slots=True)
 class ProjectInfo:
     project_id: str
-    customer: Record
-    bank: Record
-    project: Record
-    project_amount: float
+    bank: str
+    bank_id: str
+    project: str
+    customer: str
+    customer_id: str
 
 
 class Schemas:
@@ -136,10 +140,11 @@ class CRM(RequestHandler):
 
             project_info = ProjectInfo(
                 project_id=row.get("Id"),
-                customer=self.create_record(row=row, key="Customer"),
-                bank=self.create_record(row=row, key="BvuLk"),
-                project=self.create_record(row=row, key="Project"),
-                project_amount=row.get("ProjectAmount"),
+                bank=(row.get("BvuLk") or {}).get("displayValue"),
+                bank_id=(row.get("BvuLk") or {}).get("value"),
+                project=(row.get("Project") or {}).get("displayValue"),
+                customer=(row.get("Customer") or {}).get("displayValue"),
+                customer_id=(row.get("Customer") or {}).get("value"),
             )
 
             return True, project_info
@@ -178,3 +183,67 @@ class CRM(RequestHandler):
             value=record_data.get("value"),
             display_value=record_data.get("displayValue"),
         )
+
+
+def fetch_crm_data(crm: CRM, db: DatabaseManager, banks_json_path: Path) -> None:
+    with banks_json_path.open("r", encoding="utf-8") as f:
+        banks = json.load(f)
+
+    contracts = db.execute(
+        "SELECT protocol_id, contract_id FROM protocol_ids WHERE DATE(date_modified) = ? AND newest IS TRUE",
+        (date.today().isoformat(),),
+    )
+
+    count = len(contracts)
+    for idx, (protocol_id, contract_id) in enumerate(contracts, start=1):
+        crm_contract = CrmContract(contract_id)
+
+        if (
+            crm_contract.project_id
+            and crm_contract.bank_id
+            and crm_contract.project
+            and crm_contract.customer
+            and crm_contract.customer_id
+        ):
+            continue
+
+        logging.info(f"CRM - {idx:02}/{count} - {contract_id}")
+
+        status, project_info = crm.find_project(protocol_id=protocol_id)
+        if not status:
+            logging.error(f"CRM - ERROR - {protocol_id=}")
+            continue
+        logging.info(f"CRM - SUCCESS - {protocol_id=}")
+
+        bank = Bank(
+            bank_id=project_info.bank_id,
+            bank=project_info.bank,
+            year_count=banks.get(project_info.bank_id),
+        )
+
+        crm_contract.project_id = project_info.project_id
+        crm_contract.bank_id = project_info.bank_id
+        crm_contract.project = project_info.project
+        crm_contract.customer = project_info.customer
+        crm_contract.customer_id = project_info.customer_id
+
+        # row = dict()
+        # for protocol_id in contract.protocol_ids:
+        #     status, project_info = crm.find_project(protocol_id=protocol_id)
+        #     if not status:
+        #         logging.error(f"CRM - ERROR - {protocol_id=}")
+        #         continue
+        #     logging.info(f"CRM - SUCCESS - {protocol_id=}")
+        #
+        #     row["project_info"] = project_info
+        #
+        #     # status, project = crm.get_project_data(project_info.project_id)
+        #     # if not status:
+        #     #     logging.error(f"CRM - ERROR - {project_info.project_id=}")
+        #     #     continue
+        #     # logging.info(f"CRM - SUCCESS - {project_info.project_id=}")
+        #     # row["project"] = project
+        #     contract.data[protocol_id] = row
+
+        crm_contract.save(db)
+        bank.save(db)

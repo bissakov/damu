@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
@@ -29,17 +29,14 @@ from src.error import (
     format_error,
 )
 from src.subsidy import (
-    CustomJSONEncoder,
     InterestRate,
     ParseContract,
-    SubsidyContract,
-    contract_count,
-    iter_contracts,
+    ProtocolID,
 )
 from src.utils.collections import find, index
 from src.utils.db_manager import DatabaseManager
-from src.utils.office import Office, OfficeType
 from src.utils.my_types import IterableResult, Result
+from src.utils.office import Office, OfficeType
 from src.utils.utils import compare, safe_extract
 
 
@@ -427,18 +424,20 @@ class SubsidyParser:
         self,
         document: SubsidyDocument,
         contract: ParseContract,
-        banks: Dict[str, Optional[int]],
+        interest_rates: List[InterestRate],
+        protocol_ids: List[ProtocolID],
         patterns: RegexPatterns,
     ) -> None:
         self.contract = contract
+        self.interest_rates = interest_rates
+        self.protocol_ids = protocol_ids
         self.patterns = patterns
         self.document = document
-        self.banks = banks
 
         self.table_parser = TableParser(document=self.document, patterns=self.patterns)
 
-    def find_protocol_ids(self) -> List[str]:
-        protocol_ids: List[str] = []
+    def find_protocol_ids(self) -> List[ProtocolID]:
+        protocol_ids: List[ProtocolID] = []
         termin_para_idx = index(
             self.document.paragraphs, condition=lambda p: "ермин" in p
         )
@@ -453,7 +452,10 @@ class SubsidyParser:
             if x
         ][-1]
 
-        protocol_ids = self.patterns.protocol_id.findall(text)
+        protocol_ids = [
+            ProtocolID(protocol_id=pid, contract_id=self.contract.contract_id)
+            for pid in self.patterns.protocol_id.findall(text)
+        ]
         return protocol_ids
 
     def find_ibans(self) -> List[str]:
@@ -515,9 +517,11 @@ class SubsidyParser:
 
         with suppress(ValueError):
             if len(date_str) == 10:
-                return datetime.strptime(date_str, "%d.%m.%Y"), None
+                res = datetime.strptime(date_str, "%d.%m.%Y").date()
+                return res, None
             elif len(date_str) == 8:
-                return datetime.strptime(date_str, "%d.%m.%y"), None
+                res = datetime.strptime(date_str, "%d.%m.%y").date()
+                return res, None
 
         items: Tuple[str, ...] = tuple(
             item
@@ -555,7 +559,12 @@ class SubsidyParser:
                 year = year_match.group(1)
 
         fmt = "%d.%m.%Y" if len(year) == 4 else "%d.%m.%y"
-        return datetime.strptime(f"{day}.{month_num}.{year}", fmt).date(), None
+
+        try:
+            res = datetime.strptime(f"{day}.{month_num}.{year}", fmt).date()
+            return res, None
+        except ValueError as err:
+            return None, err
 
     def find_subsidy_loan_amount(self) -> Optional[float]:
         for table in self.document.doc.tables:
@@ -644,7 +653,9 @@ class SubsidyParser:
                 nominal_rate = rate
                 continue
 
-            interest_rate = InterestRate(rate=rate)
+            interest_rate = InterestRate(
+                rate=rate, contract_id=self.contract.contract_id
+            )
 
             dates_str = self.patterns.date.findall(part)
             try:
@@ -779,18 +790,17 @@ class SubsidyParser:
         self, todo: Dict[str, bool]
     ) -> IterableResult[List[pd.DataFrame]]:
         if todo.get("protocol_ids") is True:
-            self.contract.protocol_ids.extend(
+            self.protocol_ids.extend(
                 pid
                 for pid in self.find_protocol_ids()
-                if pid not in self.contract.protocol_ids
+                if pid not in [p.protocol_id for p in self.protocol_ids]
             )
 
-            if not self.contract.protocol_ids:
+            if not self.protocol_ids:
                 logging.error("PARSE - WARNING - protocols not found")
             else:
-                logging.debug(
-                    f"PARSE - found {len(self.contract.protocol_ids)} protocols"
-                )
+                self.protocol_ids[-1].newest = True
+                logging.debug(f"PARSE - found {len(self.protocol_ids)} protocols")
 
         if todo.get("iban") is True:
             ibans = self.find_ibans()
@@ -832,13 +842,16 @@ class SubsidyParser:
         #     return [], err
 
         if todo.get("interest_rates") is True:
-            self.contract.interest_rates = [
-                InterestRate(
-                    rate=10.0,
-                    start_date=self.contract.start_date,
-                    end_date=self.contract.end_date,
-                )
-            ]
+            self.interest_rates.extend(
+                [
+                    InterestRate(
+                        rate=10.0,
+                        start_date=self.contract.start_date,
+                        end_date=self.contract.end_date,
+                        contract_id=self.contract.contract_id,
+                    )
+                ]
+            )
 
         if todo.get("loan_amount") is True:
             self.contract.loan_amount = self.find_subsidy_loan_amount()
@@ -852,29 +865,31 @@ class SubsidyParser:
         return dfs, err
 
 
-def parse_documents(
-    patterns: RegexPatterns,
-    banks: Dict[str, Optional[int]],
-    db: DatabaseManager,
-) -> None:
-    query = """
-        SELECT id, save_folder FROM edo_contracts
-        WHERE DATE(date_modified) = ?
-    """
-    contracts = db.execute(query, (date.today().isoformat(),))
+def parse_documents(db: DatabaseManager, months_json_path: Path) -> None:
+    with months_json_path.open("r", encoding="utf-8") as f:
+        months = json.load(f)
+    patterns = RegexPatterns(months=months)
+    del months
+
+    contracts = db.execute(
+        "SELECT id, save_folder FROM edo_contracts WHERE DATE(date_modified) = ?",
+        (date.today().isoformat(),),
+    )
 
     count = len(contracts)
     for idx, (contract_id, save_folder) in enumerate(contracts, start=1):
         logging.info(f"PARSE - {idx:02}/{count} - {contract_id}")
 
         parse_contract = ParseContract(contract_id=contract_id)
+        interest_rates: List[InterestRate] = []
+        protocol_ids: List[ProtocolID] = []
 
         todo = {
-            "protocol_ids": not parse_contract.protocol_ids,
+            "protocol_ids": not protocol_ids,
             "iban": parse_contract.iban is None,
             "start_date": parse_contract.start_date is None,
             "end_date": parse_contract.end_date is None,
-            "interest_rates": not parse_contract.interest_rates,
+            "interest_rates": not interest_rates,
             "loan_amount": parse_contract.loan_amount is None,
         }
 
@@ -895,7 +910,13 @@ def parse_documents(
         if documents:
             dfs: List[pd.DataFrame] = []
             for jdx, document in enumerate(documents, start=1):
-                parser = SubsidyParser(document, parse_contract, banks, patterns)
+                parser = SubsidyParser(
+                    document=document,
+                    contract=parse_contract,
+                    interest_rates=interest_rates,
+                    protocol_ids=protocol_ids,
+                    patterns=patterns,
+                )
 
                 if document_count > 1:
                     logging.info(
@@ -918,27 +939,13 @@ def parse_documents(
             logging.error(err)
             parse_contract.error = format_error(err)
 
-        db.execute(
-            """
-            INSERT OR REPLACE INTO parse_contracts
-                (id, start_date, end_date, loan_amount, iban, protocol_ids, interest_rates, error, date_modified)
-            VALUES
-                (:id, :start_date, :end_date, :loan_amount, :iban, :protocol_ids, :interest_rates, :error, :date_modified)
-            """,
-            {
-                "id": parse_contract.contract_id,
-                "start_date": parse_contract.start_date,
-                "end_date": parse_contract.end_date,
-                "loan_amount": parse_contract.loan_amount,
-                "iban": json.dumps(parse_contract.iban),
-                "protocol_ids": json.dumps(parse_contract.protocol_ids),
-                "interest_rates": json.dumps(
-                    parse_contract.interest_rates, cls=CustomJSONEncoder
-                ),
-                "error": parse_contract.error,
-                "date_modified": datetime.now().isoformat(),
-            },
-        )
+        parse_contract.save(db)
+
+        for rate in interest_rates:
+            rate.save(db)
+
+        for protocol_id in protocol_ids:
+            protocol_id.save(db)
 
         # if any(todo.values()):
         #     contract.save(db)
