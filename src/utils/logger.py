@@ -1,6 +1,7 @@
 import logging
 from datetime import date, datetime
 from pathlib import Path
+from typing import Optional
 
 from rich.console import Console
 from rich.highlighter import ReprHighlighter
@@ -23,19 +24,24 @@ class CustomHighlighter(ReprHighlighter):
                 text.highlight_words([keyword], style=color)
 
 
-def setup_logger(project_root: Path, today: date) -> Path:
-    logging.Formatter.converter = lambda *args: datetime.now().timetuple()
+def setup_logger(today: Optional[date] = None) -> Path:
+    if today is None:
+        today = date.today()
 
-    log_folder = project_root / "logs"
+    log_folder = Path("logs")
     log_folder.mkdir(exist_ok=True)
 
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    level = logging.DEBUG
 
-    log_format = (
-        "[%(asctime)s] %(levelname)-7s %(filename)s:%(funcName)s:%(lineno)s %(message)s"
-    )
-    formatter = logging.Formatter(log_format, datefmt="%H:%M:%S")
+    logger = logging.getLogger()
+    logging.Formatter.converter = lambda *args: datetime.now().timetuple()
+
+    logger.setLevel(level)
+
+    # log_format = (
+    #     "[%(asctime)s] %(levelname)-7s %(filename)s:%(funcName)s:%(lineno)s %(message)s"
+    # )
+    # formatter = logging.Formatter(log_format, datefmt="%H:%M:%S")
 
     today_str = today.strftime("%d.%m.%y")
     year_month_folder = log_folder / today.strftime("%Y/%B")
@@ -43,17 +49,18 @@ def setup_logger(project_root: Path, today: date) -> Path:
 
     logger_file = year_month_folder / f"{today_str}.log"
 
-    file_handler = logging.FileHandler(logger_file, encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
+    # file_handler = logging.FileHandler(logger_file, encoding="utf-8")
+    # file_handler.setLevel(level)
+    # file_handler.setFormatter(formatter)
 
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
+    logging.getLogger("parquet").setLevel(logging.WARNING)
 
-    logger.addHandler(file_handler)
+    # logger.addHandler(file_handler)
 
     rich_console = Console(
         soft_wrap=False,

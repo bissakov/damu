@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 from enum import Enum
 from pathlib import Path
@@ -15,10 +16,27 @@ class OfficeType(Enum):
     WordType: str = "Word.Application"
 
 
+class FileFormat(Enum):
+    DOCX: int = 16
+    PDF: int = 17
+
+
 class UnsupportedOfficeAppError(Exception):
     def __init__(self, office_type: OfficeType) -> None:
         message = f"Unknown {office_type!r}"
         super().__init__(message)
+
+
+def validate_format(file_path: str, file_format: FileFormat) -> bool:
+    file_extension = file_path.rsplit(".")[-1]
+
+    match file_format:
+        case file_format.DOCX:
+            return file_extension == "docx"
+        case file_format.PDF:
+            return file_extension == "pdf"
+        case _:
+            return False
 
 
 class Office:
@@ -28,6 +46,9 @@ class Office:
         self.file_path: str = (
             str(file_path) if isinstance(file_path, Path) else file_path
         )
+        self.project_folder = os.getenv("project_folder")
+        if self.project_folder:
+            self.file_path = os.path.join(self.project_folder, self.file_path)
         try:
             self.app = win32.Dispatch(office_type.value)
         except AttributeError:
@@ -57,9 +78,16 @@ class Office:
             raise self.potential_error
         return self.app.Workbooks.Open(self.file_path)
 
-    def save_as(self, file_path: Union[str, Path], file_format: int) -> None:
+    def save_as(self, file_path: Union[str, Path], file_format: FileFormat) -> None:
         file_path: str = str(file_path) if isinstance(file_path, Path) else file_path
-        self.doc.SaveAs(file_path, FileFormat=file_format)
+        if not validate_format(file_path=file_path, file_format=file_format):
+            raise ValueError(
+                f"File format and extension mismatch - {file_path!r} {file_format!r}"
+            )
+
+        if self.project_folder:
+            file_path = os.path.join(self.project_folder, file_path)
+        self.doc.SaveAs(file_path, FileFormat=file_format.value)
 
     def close_doc(self) -> None:
         if not self.doc:
