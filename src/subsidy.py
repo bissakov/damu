@@ -1,9 +1,15 @@
+import io
 import json
-import pickle
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+import logging
+import os
+import zlib
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import date, datetime
-from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Union
+from typing import Dict, Optional, Union, cast
+
+import pandas as pd
+from pandas import Timestamp
+from pandas._typing import WriteBuffer
 
 from src.utils.db_manager import DatabaseManager
 
@@ -17,117 +23,219 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+def date_to_str(dt: Optional[date]) -> Optional[str]:
+    if isinstance(dt, (datetime, Timestamp)):
+        return dt.date().isoformat()
+    elif isinstance(dt, date):
+        return dt.isoformat()
+    else:
+        return None
+
+
+def str_to_date(dt: Union[str, Timestamp]) -> Optional[Timestamp]:
+    return pd.to_datetime(dt) if isinstance(dt, str) else None
+
+
 @dataclass(slots=True)
 class InterestRate:
-    rate: float
     contract_id: str
-    start_date: Optional[Union[date, str]] = None
-    end_date: Optional[Union[date, str]] = None
+    subsid_term: int
+    nominal_rate: float
+    rate_one_two_three_year: float
+    rate_four_year: float
+    rate_five_year: float
+    rate_six_seven_year: float
+    rate_fee_one_two_three_year: float
+    rate_fee_four_year: float
+    rate_fee_five_year: float
+    rate_fee_six_seven_year: float
+    start_date_one_two_three_year: Optional[Timestamp] = None
+    end_date_one_two_three_year: Optional[Timestamp] = None
+    start_date_four_year: Optional[Timestamp] = None
+    end_date_four_year: Optional[Timestamp] = None
+    start_date_five_year: Optional[Timestamp] = None
+    end_date_five_year: Optional[Timestamp] = None
+    start_date_six_seven_year: Optional[Timestamp] = None
+    end_date_six_seven_year: Optional[Timestamp] = None
 
-    def __lt__(self, other: "InterestRate") -> bool:
-        if not isinstance(other, InterestRate):
-            return False
-
-        return self.start_date < other.start_date and self.end_date < other.end_date
-
-    def __le__(self, other: "InterestRate") -> bool:
-        if not isinstance(other, InterestRate):
-            return False
-
-        return self.start_date <= other.start_date and self.end_date <= other.end_date
-
-    def __gt__(self, other: "InterestRate") -> bool:
-        if not isinstance(other, InterestRate):
-            return False
-
-        return self.start_date > other.start_date and self.end_date > other.end_date
-
-    def __ge__(self, other: "InterestRate") -> bool:
-        if not isinstance(other, InterestRate):
-            return False
-
-        return self.start_date >= other.start_date and self.end_date >= other.end_date
+    def __post_init__(self) -> None:
+        self.nominal_rate /= 100.0
+        self.rate_one_two_three_year /= 100.0
+        self.rate_four_year /= 100.0
+        self.rate_five_year /= 100.0
+        self.rate_six_seven_year /= 100.0
+        self.rate_fee_one_two_three_year /= 100.0
+        self.rate_fee_four_year /= 100.0
+        self.rate_fee_five_year /= 100.0
+        self.rate_fee_six_seven_year /= 100.0
 
     def to_json(self) -> Dict[str, Union[str, float, None]]:
         return {
-            "rate": self.rate,
-            "start_date": self.start_date,
-            "end_date": self.end_date,
-            "contract_id": self.contract_id,
-            "date_modified": datetime.now().isoformat(),
+            "id": self.contract_id,
+            "subsid_term": self.subsid_term,
+            "nominal_rate": self.nominal_rate,
+            "rate_one_two_three_year": self.rate_one_two_three_year,
+            "rate_four_year": self.rate_four_year,
+            "rate_five_year": self.rate_five_year,
+            "rate_six_seven_year": self.rate_six_seven_year,
+            "rate_fee_one_two_three_year": self.rate_fee_one_two_three_year,
+            "rate_fee_four_year": self.rate_fee_four_year,
+            "rate_fee_five_year": self.rate_fee_five_year,
+            "rate_fee_six_seven_year": self.rate_fee_six_seven_year,
+            "start_date_one_two_three_year": date_to_str(self.start_date_one_two_three_year),
+            "end_date_one_two_three_year": date_to_str(self.end_date_one_two_three_year),
+            "start_date_four_year": date_to_str(self.start_date_four_year),
+            "end_date_four_year": date_to_str(self.end_date_four_year),
+            "start_date_five_year": date_to_str(self.start_date_five_year),
+            "end_date_five_year": date_to_str(self.end_date_five_year),
+            "start_date_six_seven_year": date_to_str(self.start_date_six_seven_year),
+            "end_date_six_seven_year": date_to_str(self.end_date_six_seven_year),
         }
 
     def save(self, db: DatabaseManager) -> None:
         query = """
         INSERT OR REPLACE INTO interest_rates
-            (rate, start_date, end_date, contract_id, date_modified)
+            (
+                id,
+                subsid_term,
+                nominal_rate,
+                rate_one_two_three_year,
+                rate_four_year,
+                rate_five_year,
+                rate_six_seven_year,
+                rate_fee_one_two_three_year,
+                rate_fee_four_year,
+                rate_fee_five_year,
+                rate_fee_six_seven_year,
+                start_date_one_two_three_year,
+                end_date_one_two_three_year,
+                start_date_four_year,
+                end_date_four_year,
+                start_date_five_year,
+                end_date_five_year,
+                start_date_six_seven_year,
+                end_date_six_seven_year
+            )
         VALUES
-            (:rate, :start_date, :end_date, :contract_id, :date_modified)
+            (
+                :id,
+                :subsid_term,
+                :nominal_rate,
+                :rate_one_two_three_year,
+                :rate_four_year,
+                :rate_five_year,
+                :rate_six_seven_year,
+                :rate_fee_one_two_three_year,
+                :rate_fee_four_year,
+                :rate_fee_five_year,
+                :rate_fee_six_seven_year,
+                :start_date_one_two_three_year,
+                :end_date_one_two_three_year,
+                :start_date_four_year,
+                :end_date_four_year,
+                :start_date_five_year,
+                :end_date_five_year,
+                :start_date_six_seven_year,
+                :end_date_six_seven_year
+            )
         """
         db.execute(query, self.to_json())
 
 
 @dataclass(slots=True)
-class ProtocolID:
-    protocol_id: str
+class Error:
     contract_id: str
-    newest: bool = False
+    traceback: Optional[str] = None
+    human_readable: Optional[str] = None
 
     def to_json(self) -> Dict[str, Union[str, float, None]]:
         return {
-            "protocol_id": self.protocol_id,
-            "contract_id": self.contract_id,
-            "newest": self.newest,
-            "date_modified": datetime.now().isoformat(),
+            "id": self.contract_id,
+            "traceback": self.traceback,
+            "human_readable": self.human_readable,
         }
 
     def save(self, db: DatabaseManager) -> None:
         query = """
-        INSERT OR REPLACE INTO protocol_ids
-            (protocol_id, contract_id, newest, date_modified)
-        VALUES
-            (:protocol_id, :contract_id, :newest, :date_modified)
+            INSERT OR REPLACE INTO errors
+            (id, traceback, human_readable)
+            VALUES
+            (:id, :traceback, :human_readable)
         """
         db.execute(query, self.to_json())
 
+    def get_human_readable(self) -> Optional[str]:
+        trc = self.traceback
+        if trc is None:
+            return None
 
-@dataclass(slots=True)
-class Record:
-    value: str
-    display_value: str
+        if "ContractsNofFoundError" in trc:
+            human_readable = (
+                "Не найден договор субсидирования (файл .docx) в списке вложенных файлов"
+            )
+        elif "DateNotFoundError" in trc:
+            human_readable = (
+                "Не удалсь найти либо не удалось обработать дату начала или завершения ДС"
+            )
+        elif "InvalidColumnCount" in trc or "TableNotFound" in trc:
+            human_readable = (
+                "Таблица погашения нестандартного вида, не удалось обработать таблицу. "
+                "Возможные причины - смещеннные строки/колонки, "
+                "неравназначное кол-во именных колонок и колонок данных"
+            )
+        elif "MismatchError" in trc:
+            human_readable = "Расхождения между строчными и итоговыми данными в таблице погашения"
+        elif "ExcesssiveTableCountError" in trc:
+            human_readable = "Найдено неверное кол-во таблиц погашений - меньше 1, но больше 2"
+        elif "DataFrameInequalityError" in trc:
+            human_readable = "Казахские и русские версии таблиц погашений не равны друг другу"
+        elif "BankNotSupportedError" in trc or "Договор Исламского банка" in trc:
+            human_readable = "Данный банк не поддерживается на данный момент"
+        elif "Protocol IDs not found" in trc:
+            human_readable = "Номера протоколов не найдены в договоре субсидирования"
+        elif "IBANs not found" in trc:
+            human_readable = "IBAN коды не найдены в договоре субсидирования"
+        elif "IBANs are different" in trc:
+            human_readable = (
+                "Расхождения между IBAN кодами в казахской и русской версиях графика погашения"
+            )
+        elif "CRMNotFoundError" in trc:
+            human_readable = "Не удалось найти проект по протоколу в CRM"
+        elif "VypiskaDownloadError" in trc:
+            human_readable = "Не удалось скачать выписку из CRM"
+        elif "TypeError" in trc and "vypiska_date" in trc:
+            human_readable = "Не удалось получить дату протокола из CRM"
+        elif "ValueError" in trc and "repayment_procedure=None" in trc:
+            human_readable = "Не удалось получить порядок погашения из CRM"
+        else:
+            human_readable = "Неизвестная ошибка"
+
+        return human_readable
 
 
 @dataclass(slots=True)
 class EdoContract:
     contract_id: str
-    reg_number: str
-    contract_type: str
-    reg_date: date
-    download_path: str
-    save_folder: str
-
-    def __hash__(self) -> int:
-        return hash((self.contract_id,))
+    ds_id: str
+    ds_date: date
+    contragent: str
+    sed_number: str
 
     def to_json(self) -> Dict[str, Union[str, float, None]]:
         return {
             "id": self.contract_id,
-            "reg_number": self.reg_number,
-            "contract_type": self.contract_type,
-            "reg_date": self.reg_date,
-            "download_path": self.download_path,
-            "save_folder": self.save_folder,
-            "date_modified": datetime.now().isoformat(),
+            "ds_id": self.ds_id,
+            "ds_date": self.ds_date,
+            "contragent": self.contragent,
+            "sed_number": self.sed_number,
         }
 
     def save(self, db: DatabaseManager) -> None:
         query = """
-            INSERT OR REPLACE INTO edo_contracts
-                (id, reg_number, contract_type, reg_date, 
-                download_path, save_folder, date_modified)
+            INSERT OR REPLACE INTO contracts
+            (id, ds_id, ds_date, contragent, sed_number)
             VALUES
-                (:id, :reg_number, :contract_type, :reg_date, 
-                :download_path, :save_folder, :date_modified)
+            (:id, :ds_id, :ds_date, :contragent, :sed_number)
         """
         db.execute(query, self.to_json())
 
@@ -135,32 +243,55 @@ class EdoContract:
 @dataclass(slots=True)
 class ParseContract:
     contract_id: str
+    protocol_id: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     loan_amount: Optional[float] = None
     iban: Optional[str] = None
-    error: Optional[str] = None
+    df: Optional[pd.DataFrame] = None
+    dbz_id: Optional[str] = None
+    dbz_date: Optional[date] = None
+    file_name: Optional[str] = None
+    error: Optional[Error] = None
 
     def __hash__(self) -> int:
         return hash((self.contract_id,))
 
     def to_json(self) -> Dict[str, Union[str, float, None]]:
+        if self.df is None:
+            df_blob = None
+        else:
+            buffer = io.BytesIO()
+            self.df.to_parquet(cast(WriteBuffer[bytes], buffer), engine="fastparquet")
+            df_blob = zlib.compress(buffer.getvalue())
+
         return {
             "id": self.contract_id,
-            "start_date": self.start_date,
-            "end_date": self.end_date,
+            "protocol_id": self.protocol_id,
+            "start_date": date_to_str(self.start_date),
+            "end_date": date_to_str(self.end_date),
             "loan_amount": self.loan_amount,
-            "iban": json.dumps(self.iban),
-            "error": self.error,
-            "date_modified": datetime.now().isoformat(),
+            "iban": self.iban,
+            "df": df_blob if self.df is not None else None,
+            "dbz_id": self.dbz_id,
+            "dbz_date": date_to_str(self.dbz_date),
+            "file_name": self.file_name,
         }
 
     def save(self, db: DatabaseManager) -> None:
         query = """
-        INSERT OR REPLACE INTO parse_contracts
-            (id, start_date, end_date, loan_amount, iban, error, date_modified)
-        VALUES
-            (:id, :start_date, :end_date, :loan_amount, :iban, :error, :date_modified)
+            UPDATE contracts
+            SET protocol_id = :protocol_id,
+                start_date = :start_date,
+                end_date = :end_date,
+                loan_amount = :loan_amount,
+                iban = :iban,
+                df = :df,
+                dbz_id = :dbz_id,
+                dbz_date = :dbz_date,
+                file_name = :file_name,
+                modified = CURRENT_TIMESTAMP
+            WHERE id = :id
         """
         db.execute(query, self.to_json())
 
@@ -183,8 +314,8 @@ class Bank:
 
     def save(self, db: DatabaseManager) -> None:
         query = """
-        INSERT OR REPLACE INTO banks (bank_id, bank, year_count)
-        VALUES (:bank_id, :bank, :year_count)
+            INSERT OR REPLACE INTO banks (bank_id, bank, year_count)
+            VALUES (:bank_id, :bank, :year_count)
         """
         db.execute(query, self.to_json())
 
@@ -197,6 +328,18 @@ class CrmContract:
     customer: Optional[str] = None
     customer_id: Optional[str] = None
     bank_id: Optional[str] = None
+    subsid_amount: Optional[float] = None
+    investment_amount: Optional[float] = None
+    pos_amount: Optional[float] = None
+    vypiska_date: Optional[date] = None
+    credit_purpose: Optional[str] = None
+    repayment_procedure: Optional[str] = None
+    request_number: Optional[int] = None
+    protocol_date: Optional[date] = None
+    decision_date: Optional[date] = None
+    dbz_id: Optional[str] = None
+    dbz_date: Optional[date] = None
+    error: Optional[Error] = None
 
     def __hash__(self) -> int:
         return hash((self.contract_id,))
@@ -209,17 +352,40 @@ class CrmContract:
             "customer": self.customer,
             "customer_id": self.customer_id,
             "bank_id": self.bank_id,
-            "date_modified": datetime.now().isoformat(),
+            "subsid_amount": self.subsid_amount,
+            "investment_amount": self.investment_amount,
+            "pos_amount": self.pos_amount,
+            "vypiska_date": date_to_str(self.vypiska_date),
+            "credit_purpose": self.credit_purpose,
+            "repayment_procedure": self.repayment_procedure,
+            "request_number": self.request_number,
+            "protocol_date": date_to_str(self.protocol_date),
+            "decision_date": date_to_str(self.decision_date),
+            "dbz_id": self.dbz_id,
+            "dbz_date": date_to_str(self.dbz_date),
         }
 
     def save(self, db: DatabaseManager) -> None:
         query = """
-        INSERT OR REPLACE INTO crm_contracts
-            (id, project_id, project, customer, 
-            customer_id, bank_id, date_modified)
-        VALUES
-            (:id, :project_id, :project, :customer, 
-            :customer_id, :bank_id, :date_modified)
+            UPDATE contracts
+            SET project_id = :project_id,
+                project = :project,
+                customer = :customer,
+                customer_id = :customer_id,
+                bank_id = :bank_id,
+                subsid_amount = :subsid_amount,
+                investment_amount = :investment_amount,
+                pos_amount = :pos_amount,
+                vypiska_date = :vypiska_date,
+                credit_purpose = :credit_purpose,
+                repayment_procedure = :repayment_procedure,
+                request_number = :request_number,
+                protocol_date = :protocol_date,
+                decision_date = :decision_date,
+                dbz_id = :dbz_id,
+                dbz_date = :dbz_date,
+                modified = CURRENT_TIMESTAMP
+            WHERE id = :id
         """
         db.execute(query, self.to_json())
 
@@ -227,95 +393,59 @@ class CrmContract:
 @dataclass(slots=True)
 class SubsidyContract:
     contract_id: str
-    reg_number: str
-    contract_type: str
-    reg_date: str
-    download_path: str
-    save_folder: str
-    project_id: Optional[str] = None
-    bank: Optional[Record] = None
-    project: Optional[Record] = None
-    customer: Optional[Record] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    loan_amount: Optional[float] = None
-    iban: Optional[str] = None
-    protocol_ids: List[str] = field(default_factory=list)
-    interest_rates: List[InterestRate] = field(default_factory=list)
-    error: Optional[str] = None
+    start_date: Timestamp
+    end_date: Timestamp
+    loan_amount: float
+    df: pd.DataFrame
+    bank: str
+    year_count: int
+    rate_one_two_three_year: float
+    rate_four_year: float
+    rate_five_year: float
+    rate_six_seven_year: float
+    start_date_one_two_three_year: Optional[Timestamp]
+    end_date_one_two_three_year: Optional[Timestamp]
+    start_date_four_year: Optional[Timestamp]
+    end_date_four_year: Optional[Timestamp]
+    start_date_five_year: Optional[Timestamp]
+    end_date_five_year: Optional[Timestamp]
+    start_date_six_seven_year: Optional[Timestamp]
+    end_date_six_seven_year: Optional[Timestamp]
 
-    def save(self, db: DatabaseManager) -> None:
-        # noinspection PyTypeChecker
-        json_blob = json.dumps(
-            asdict(self), ensure_ascii=False, indent=2, cls=CustomJSONEncoder
+    def print_rates(self) -> str:
+        one_two_three = (
+            f"1-3=(rate={self.rate_one_two_three_year}, "
+            f"start={self.start_date_one_two_three_year}, "
+            f"end={self.end_date_one_two_three_year})"
         )
-        contract_blob = pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
-
-        db.execute(
-            """
-                INSERT OR REPLACE INTO contracts
-                    (id, reg_date, date_modified, json, contract, error)
-                VALUES
-                    (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                self.contract_id,
-                self.reg_date,
-                datetime.now().isoformat(),
-                json_blob,
-                contract_blob,
-                self.error,
-            ),
+        four = (
+            f"4=(rate={self.rate_four_year}, "
+            f"start={self.start_date_four_year}, "
+            f"end={self.end_date_four_year})"
         )
+        five = (
+            f"5=(rate={self.rate_five_year}, "
+            f"start={self.start_date_five_year}, "
+            f"end={self.end_date_five_year})"
+        )
+        six_seven = (
+            f"6-7=(rate={self.rate_six_seven_year}, "
+            f"start={self.start_date_six_seven_year}, "
+            f"end={self.end_date_six_seven_year})"
+        )
+        return f"start={self.start_date!r}, end={self.end_date!r}, {one_two_three}, {four}, {five}, {six_seven}"
 
-    def __hash__(self) -> int:
-        return hash((self.contract_id, self.reg_number))
+    def __post_init__(self) -> None:
+        if isinstance(self.df, bytes):
+            self.df = pd.read_parquet(io.BytesIO(zlib.decompress(self.df)), engine="fastparquet")
 
-    @classmethod
-    def load(cls, folder: Path) -> Optional["SubsidyContract"]:
-        pkl_path = folder / "contract.pkl"
-        if pkl_path.exists():
-            with pkl_path.open("rb") as f:
-                contract: SubsidyContract = pickle.load(f)
-            return contract
-
-        json_path = folder / "contract.json"
-        if json_path.exists():
-            with json_path.open("r", encoding="utf-8") as f:
-                contract_data: Dict[str, Any] = json.load(f)
-            contract = SubsidyContract(**contract_data)
-            return contract
-
-
-def contract_count(db: DatabaseManager) -> int:
-    query = """
-        SELECT COUNT(*) FROM contracts
-        WHERE DATE(date_modified) = ? AND error IS NULL
-    """
-    result = db.execute(query, (date.today().isoformat(),), fetch_one=True)
-    return result[0] if result else 0
-
-
-def iter_contracts(
-    db: DatabaseManager, keys: List[str], table: str, additional_condition: str = ""
-) -> Generator[SubsidyContract, None, None]:
-    columns = ", ".join(keys)
-    query = f"""
-        SELECT {columns} FROM {table}
-        WHERE DATE(date_modified) = ? {additional_condition}
-    """
-    contracts = db.execute(query, (date.today().isoformat(),))
-    for contract_blob, json_blob in contracts:
-        try:
-            contract: SubsidyContract = pickle.loads(contract_blob)
-        except AttributeError:
-            # noinspection PyTypeChecker
-            valid_fields = [f.name for f in fields(SubsidyContract)]
-            contract_data = {
-                key: value
-                for key, value in json.loads(json_blob).items()
-                if key in valid_fields
-            }
-            contract: SubsidyContract = SubsidyContract(**contract_data)
-
-        yield contract
+        self.start_date = str_to_date(self.start_date)
+        self.end_date = str_to_date(self.end_date)
+        self.start_date_one_two_three_year = str_to_date(self.start_date_one_two_three_year)
+        self.end_date_one_two_three_year = str_to_date(self.end_date_one_two_three_year)
+        self.start_date_four_year = str_to_date(self.start_date_four_year)
+        self.end_date_four_year = str_to_date(self.end_date_four_year)
+        self.start_date_five_year = str_to_date(self.start_date_five_year)
+        self.end_date_five_year = str_to_date(self.end_date_five_year)
+        self.start_date_six_seven_year = str_to_date(self.start_date_six_seven_year)
+        self.end_date_six_seven_year = str_to_date(self.end_date_six_seven_year)

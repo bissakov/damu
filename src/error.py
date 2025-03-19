@@ -9,6 +9,18 @@ from typing import Any, Callable, Optional, Tuple, Type, TypeVar
 from PIL import Image, ImageGrab
 
 
+class ReplyError(Exception):
+    pass
+
+
+class CRMNotFoundError(Exception):
+    pass
+
+
+class VypiskaDownloadError(Exception):
+    pass
+
+
 class HTMLElementNotFound(Exception):
     pass
 
@@ -49,8 +61,12 @@ class DateConversionError(ParseError):
     pass
 
 
+class BankNotSupportedError(ParseError):
+    pass
+
+
 class DateNotFoundError(ParseError):
-    def __init__(self, file_name: str, contract_id: str, para: str) -> None:
+    def __init__(self, file_name: str, contract_id: str, para: str = "") -> None:
         self.file_name = file_name
         self.contract_id = contract_id
         self.message = f"No dates in {file_name!r} of a {contract_id!r} for {para}..."
@@ -61,9 +77,7 @@ class TableNotFound(ParseError):
     def __init__(self, file_name: str, contract_id: str, target: str) -> None:
         self.file_name = file_name
         self.contract_id = contract_id
-        self.message = (
-            f"No tables in {file_name!r} of a {contract_id!r} for {target}..."
-        )
+        self.message = f"No tables in {file_name!r} of a {contract_id!r} for {target}..."
         super().__init__(self.message)
 
 
@@ -163,9 +177,7 @@ class TelegramAPI:
         use_md: bool = False,
     ) -> bool: ...
 
-    def send_image(
-        self, media: Image.Image | None = None, use_session: bool = True
-    ) -> bool: ...
+    def send_image(self, media: Image.Image | None = None, use_session: bool = True) -> bool: ...
 
 
 def handle_error(func: Callable[..., any]) -> Callable[..., any]:

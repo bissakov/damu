@@ -1,9 +1,10 @@
+import io
 import logging
-import os
 import re
 import zipfile
+import zlib
 from pathlib import Path
-from typing import Union
+from typing import Any, BinaryIO, Callable, Union
 
 import pandas as pd
 import psutil
@@ -21,16 +22,6 @@ def kill_all_processes(proc_name: str) -> None:
             continue
 
 
-def get_from_env(key: str) -> str:
-    value = os.getenv(key)
-
-    if value is None:
-        error_msg = f"{key} not set in the environment variables"
-        logging.error(error_msg)
-        raise EnvironmentError(error_msg)
-    return value
-
-
 def select_one(root: Union[BeautifulSoup, Tag], selector: str) -> Tag:
     match = root.select(selector)
     if not match:
@@ -40,6 +31,23 @@ def select_one(root: Union[BeautifulSoup, Tag], selector: str) -> Tag:
 
     result = match[0]
     return result
+
+
+def normalize_value(value: str):
+    encoding_pairs = [
+        ("ibm437", "cp866"),
+        ("cp65001", "ibm866"),
+    ]
+
+    last_exception = None
+    for src_enc, dest_enc in encoding_pairs:
+        try:
+            return value.encode(src_enc).decode(dest_enc)
+        except UnicodeError as err:
+            last_exception = err
+
+    print(f"Failed to normalize: {value!r}")
+    raise last_exception
 
 
 def safe_extract(archive_path: Path, documents_folder: Path) -> None:
@@ -53,13 +61,17 @@ def safe_extract(archive_path: Path, documents_folder: Path) -> None:
         for file in archive.namelist():
             file_path = Path(file)
             file_name = file_path.name
-            if not file_name.endswith(".docx") and not file_name.endswith(".DOCX"):
+
+            if file_name.lower().endswith("docx"):
                 continue
 
-            normalized_file_name = file_name.encode("ibm437").decode("cp866")
+            normalized_file_name = normalize_value(file_name)
             normalized_file_name = re.sub(r"\s+", " ", normalized_file_name)
             normalized_file_name = normalized_file_name.replace("?", "").strip()
             extract_path = documents_folder / normalized_file_name
+
+            if extract_path.exists():
+                continue
 
             try:
                 with archive.open(file) as source, open(extract_path, "wb") as dest:
@@ -96,3 +108,13 @@ def compare(df1: pd.DataFrame, df2: pd.DataFrame) -> bool:
         ),
         True,
     )
+
+
+def save_to_bytes(
+    write_func: Callable[[BinaryIO], Any], compress: bool = True
+) -> bytes:
+    with io.BytesIO() as buffer_io:
+        write_func(buffer_io)
+        data = buffer_io.getvalue()
+
+    return zlib.compress(data) if compress else data

@@ -1,12 +1,16 @@
 import json
 import logging
+import multiprocessing.pool
+import os
 import re
+import traceback
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
+from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -16,28 +20,22 @@ from docx.table import Table
 from docx2python import docx2python
 from docx2python.docx_output import DocxContent
 from pandas._libs import OutOfBoundsDatetime
+from tqdm import tqdm
 
 from src.error import (
     ContractsNofFoundError,
     DataFrameInequalityError,
     DateNotFoundError,
     ExcesssiveTableCountError,
-    InterestRateMismatchError,
     InvalidColumnCount,
     MismatchError,
     TableNotFound,
-    format_error,
 )
-from src.subsidy import (
-    InterestRate,
-    ParseContract,
-    ProtocolID,
-)
+from src.subsidy import Error, ParseContract
 from src.utils.collections import find, index
 from src.utils.db_manager import DatabaseManager
-from src.utils.my_types import IterableResult, Result
-from src.utils.office import Office, OfficeType
-from src.utils.utils import compare, safe_extract
+from src.utils.office import FileFormat, Office, OfficeType
+from src.utils.utils import compare
 
 
 @dataclass
@@ -48,7 +46,7 @@ class RegexPatterns:
         re.IGNORECASE,
     )
     file_contents: re.Pattern = re.compile(
-        r"((бір бөлігін субсидиялау туралы)|(договор субсидирования))",
+        r"((бір бөлігін субсидиялау туралы)|(договор субсидирования)|(субсидиялаудың шарты))",
         re.IGNORECASE,
     )
     wrong_contents: re.Pattern = re.compile(r"дополнительное соглашение", re.IGNORECASE)
@@ -68,11 +66,14 @@ class RegexPatterns:
     float_number: re.Pattern = re.compile(r"([\d ., ]+)")
     number: re.Pattern = re.compile(r"(\d+)")
     start_date: re.Pattern = re.compile(r"^9\.")
-    end_date1: re.Pattern = re.compile(r"^18\.")
-    end_date2: re.Pattern = re.compile(r"^30\.")
-    complex_date: re.Pattern = re.compile(
-        r"(((\d{2,}) +(\w+) +(\w+) +(\w+))|(\d+.\d+.\d+))"
+    end_dates: List[re.Pattern] = field(
+        default_factory=lambda: [
+            re.compile(r"^18\."),
+            re.compile(r"^30\."),
+            re.compile(r"^19\."),
+        ]
     )
+    complex_date: re.Pattern = re.compile(r"(((\d{2,}) +(\w+) +(\w+) +(\w+))|(\d+.\d+.\d+))")
     whitespace: re.Pattern = re.compile(r"\s+")
     date_separator: re.Pattern = re.compile(r"[. /-]")
     interest_dates: re.Pattern = re.compile(r"«?(\d{2,})»? (\w+) «?(\d+)»? (\w+)")
@@ -99,20 +100,26 @@ class SubsidyDocument:
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(file_path={self.file_path.as_posix()}, is_subsidy={self.is_subsidy})"
 
-    def is_subsidy_file(self, patterns: RegexPatterns) -> bool:
+    def is_subsidy_file(self, patterns: RegexPatterns) -> Union[bool, str]:
         file_name = self.file_path.name.lower()
         if not file_name.endswith("docx") or file_name.startswith("~$"):
             return False
 
-        self.doc, err = self.open_document()
-        if err:
-            raise err
+        self.doc = self.open_document()
 
         self.paragraphs = [
             text
             for para in self.doc.paragraphs
             if (text := patterns.whitespace.sub(" ", para.text).strip())
         ]
+
+        if len(self.paragraphs) < 30:
+            return False
+
+        fname = file_name.lower()
+        if ("договор" in fname or "суб" in fname or "дс" in fname) and "присоед" not in fname:
+            self.is_subsidy = True
+            return self.is_subsidy
 
         first_n_paras = "\n".join(self.paragraphs[0:10])
         self.is_subsidy = (
@@ -131,8 +138,14 @@ class SubsidyDocument:
         file_path.rename(og_file_path)
 
         copy_file_path = file_path.parent / f"copy_{file_path.name}"
-        with Office(file_path=og_file_path, office_type=OfficeType.WordType) as word:
-            word.save_as(copy_file_path, 16)
+
+        try:
+            with Office(file_path=og_file_path, office_type=OfficeType.WordType) as word:
+                word.save_as(copy_file_path, FileFormat.DOCX)
+        except (Exception, BaseException) as err:
+            og_file_path.unlink()
+            copy_file_path.rename(file_path)
+            raise err
 
         og_file_path.unlink()
         copy_file_path.rename(file_path)
@@ -140,11 +153,11 @@ class SubsidyDocument:
 
     def open_document(
         self, backend: Backend = Backend.PythonDocx
-    ) -> Result[Union[DocumentObject, DocxContent]]:
+    ) -> Union[DocumentObject, DocxContent]:
         match backend:
             case Backend.PythonDocx:
                 try:
-                    return Document(str(self.file_path)), None
+                    return Document(str(self.file_path))
                 except Exception:
                     logging.warning(
                         f"Failed to open document {self.file_path}. Attempting recovery..."
@@ -152,14 +165,14 @@ class SubsidyDocument:
                     self.file_path = self.recover_document(self.file_path)
 
                     try:
-                        return Document(str(self.file_path)), None
+                        return Document(str(self.file_path))
                     except KeyError as err:
-                        logging.error(
-                            f"Failed to open document even after recovery: {err}"
-                        )
-                        return None, err
+                        logging.error(f"Failed to open document even after recovery: {err}")
+                        raise err
             case Backend.Docx2Python:
-                return docx2python(self.file_path), None
+                return docx2python(self.file_path)
+            case _:
+                raise ValueError(f"Unknown {backend!r}")
 
 
 class TableParser:
@@ -182,11 +195,11 @@ class TableParser:
             "rate": "Ставка вознаграждения",
             "day_year_count": "Кол-во дней в году",
             "subsidy_sum": "Сумма рассчитанной субсидии",
-            "difference": "Разница между расчетом Банка и Excel",
+            "bank_excel_diff": "Разница между расчетом Банка и Excel",
             "check_total": 'Проверка корректности столбца "Итого начисленного вознаграждения"',
             "ratio": "Соотношение суммы субсидий на итоговую сумму начисленного вознаграждения",
             "difference2": "Разница между субсидируемой и несубсидируемой частями",
-            "check2": "Проверка корректности остатка основного долга после произведенного погашения",
+            "principal_balance_check": "Проверка корректности остатка основного долга после произведенного погашения",
         }
 
         self.expected_columns = [
@@ -260,9 +273,7 @@ class TableParser:
         for idx in range(len(df) - 1, -1, -1):
             row = df.iloc[idx]
             for value in row:
-                if isinstance(value, str) and any(
-                    keyword in value.lower() for keyword in keywords
-                ):
+                if isinstance(value, str) and any(keyword in value.lower() for keyword in keywords):
                     return idx
 
         col = df.columns[-1]
@@ -285,16 +296,14 @@ class TableParser:
 
             if not np.isclose(sum_regular_rows, sum_total_row):
                 human_readable_column = self.human_readable.get(column)
-                message = (
-                    f"{human_readable_column!r}: {sum_regular_rows} != {sum_total_row}"
-                )
+                message = f"{human_readable_column!r}: {sum_regular_rows} != {sum_total_row}"
                 mismatches.append(message)
 
         return mismatches
 
-    def clean_dataframe(self, original_df: pd.DataFrame) -> Result[pd.DataFrame]:
+    def clean_dataframe(self, original_df: pd.DataFrame) -> pd.DataFrame:
         if original_df.empty:
-            return original_df, None
+            return original_df
 
         df: pd.DataFrame = original_df.copy()
 
@@ -311,18 +320,13 @@ class TableParser:
 
         if df.loc[0, df.columns[0]].isdigit():
             # noinspection PyUnresolvedReferences
-            if (
-                df.loc[0 : len(df) // 2, df.columns[0]].astype(int).diff().loc[1:]
-                == 1.0
-            ).all():
+            if (df.loc[0 : len(df) // 2, df.columns[0]].astype(int).diff().loc[1:] == 1.0).all():
                 df.drop(df.columns[0], axis=1, inplace=True)
 
         if len(df.columns) == 6:
             df.columns = self.expected_columns
         else:
-            return None, InvalidColumnCount(
-                f"Expected 6 columns - {len(df.columns)} found..."
-            )
+            raise InvalidColumnCount(f"Expected 6 columns - {len(df.columns)} found...")
 
         df["total"] = False
 
@@ -344,7 +348,9 @@ class TableParser:
                 df.loc[:, "debt_repayment_date"], dayfirst=True, format="mixed"
             )
         except (OutOfBoundsDatetime, ValueError) as err:
-            return None, err
+            raise err
+
+        df["debt_repayment_date"] = df["debt_repayment_date"].astype("datetime64[ns]")
 
         columns_to_process = [
             "principal_debt_balance",
@@ -364,31 +370,28 @@ class TableParser:
         df.reset_index(inplace=True, drop=True)
 
         if mismatches := self.validate_totals(df, value_columns=columns_to_process):
-            return None, MismatchError("; ".join(mismatches))
+            raise MismatchError("; ".join(mismatches))
 
-        return df, None
+        return df
 
-    def parse_tables(
-        self, contract: ParseContract
-    ) -> IterableResult[List[pd.DataFrame]]:
+    def parse_tables(self, contract: ParseContract) -> List[pd.DataFrame]:
         tables = self.find_tables()
         table_count = len(tables)
 
         if not tables:
-            return [], TableNotFound(
+            raise TableNotFound(
                 self.document.file_path.name,
                 contract.contract_id,
                 target="График погашения",
             )
 
         if table_count < 1 or table_count > 2:
-            return [], ExcesssiveTableCountError(
+            raise ExcesssiveTableCountError(
                 self.document.file_path.name, contract.contract_id, table_count
             )
 
         logging.debug(f"PARSE - found {table_count} table")
 
-        err = None
         dfs = []
         for table in tables:
             data_start_row_idx = index(
@@ -401,8 +404,7 @@ class TableParser:
             data_start_row_idx2 = index(
                 items=table,
                 condition=lambda row: any(
-                    len(cell) > 1 and not self.patterns.alpha_letters.search(cell)
-                    for cell in row
+                    len(cell) > 1 and not self.patterns.alpha_letters.search(cell) for cell in row
                 ),
             )
 
@@ -411,12 +413,9 @@ class TableParser:
                 data_start_row_idx = data_start_row_idx2
 
             df = pd.DataFrame(table[data_start_row_idx:])
-            df, err = self.clean_dataframe(df)
-            if err:
-                break
+            df = self.clean_dataframe(df)
             dfs.append(df)
-
-        return dfs, err
+        return dfs
 
 
 class SubsidyParser:
@@ -424,55 +423,126 @@ class SubsidyParser:
         self,
         document: SubsidyDocument,
         contract: ParseContract,
-        interest_rates: List[InterestRate],
-        protocol_ids: List[ProtocolID],
         patterns: RegexPatterns,
     ) -> None:
         self.contract = contract
-        self.interest_rates = interest_rates
-        self.protocol_ids = protocol_ids
         self.patterns = patterns
         self.document = document
 
         self.table_parser = TableParser(document=self.document, patterns=self.patterns)
 
-    def find_protocol_ids(self) -> List[ProtocolID]:
-        protocol_ids: List[ProtocolID] = []
+    def find_protocol_id(self) -> Optional[str]:
         termin_para_idx = index(
-            self.document.paragraphs, condition=lambda p: "ермин" in p
+            self.document.paragraphs, condition=lambda p: "ермин" in p, default=-1
         )
 
-        if not termin_para_idx:
-            logging.error(f"EDO - no protocol ids found...")
-            return protocol_ids
+        if termin_para_idx != -1:
+            text = [x for x in "".join(self.document.paragraphs[:termin_para_idx]).split(";") if x][
+                -1
+            ]
 
-        text = [
-            x
-            for x in "".join(self.document.paragraphs[:termin_para_idx]).split(";")
-            if x
-        ][-1]
+            protocol_ids = self.patterns.protocol_id.findall(text)
+            return protocol_ids[-1]
 
-        protocol_ids = [
-            ProtocolID(protocol_id=pid, contract_id=self.contract.contract_id)
-            for pid in self.patterns.protocol_id.findall(text)
-        ]
-        return protocol_ids
+        if not self.document.docx_content:
+            self.document.docx_content = self.document.open_document(backend=Backend.Docx2Python)
+
+        full_text = self.document.docx_content.text
+        termin_idx = full_text.find("ермин")
+        protocol_ids = self.patterns.protocol_id.findall(full_text[:termin_idx])
+        return protocol_ids[-1]
 
     def find_ibans(self) -> List[str]:
-        ibans: List[str] = self.patterns.iban.findall("".join(self.document.paragraphs))
+        ibans: List[str] = self.patterns.iban.findall(
+            "".join(self.document.paragraphs[1 : int(len(self.document.paragraphs) * 0.7)])
+        )
+        if ibans:
+            ibans = [iban.replace('"', "") for iban in ibans]
+            return ibans
+
+        if not self.document.docx_content:
+            self.document.docx_content = self.document.open_document(backend=Backend.Docx2Python)
+
+        ibans: List[str] = self.patterns.iban.findall(self.document.docx_content.text)
         return ibans
 
-    def find_subsidy_date(self, pat: re.Pattern) -> Result[date]:
-        para = find(
-            self.document.paragraphs, condition=lambda p: pat.search(p) is not None
-        )
+    def find_dbz(self) -> Tuple[Optional[str], Optional[date]]:
+        dbz_data = None
+        for table in self.document.doc.tables:
+            parsed_table = self.table_parser.parse_table(table)
+            first_row = parsed_table[0]
+            first_col = first_row[0]
+            if self.patterns.kz_letters.search(first_col):
+                continue
+
+            if first_col.count("/") == 2 or "Договор банковского займа" in first_col:
+                value = first_row[1]
+                dbz_data = value.strip()
+                break
+
+        if not dbz_data:
+            return None, None
+
+        easy_exprs = [
+            r"Заявление[№ ]+([^ ]+) на выдачу банковского займа от (\d+.\d+.\d+)",
+            r"ДОГОВОР БАНКОВСКОГО ЗАЙМА № ?([^ ]+) от (\d+.\d+.\d+)",
+            r"к заявлению на выдачу банковского займа[№ ]+([^ ]+) +от (\d+.\d+.\d+)",
+            r"займа[№ ]+([^ ]+) от (\d+.\d+.\d+)",
+            r"^[№ ]+([^ ]+)\s*от\s+(\d+.\d+.\d+)",
+            r"Заявление[№ ]+([^ ]+)\s+на\s+выдачу[А-Яа-я ]+(\d+.\d+.\d+)",
+            r"Соглашение\s+об\s+открытии\s+кредитной\s+линии[№ ]+([^ ]+)\sот\s(\d+.\d+.\d+)",
+            r"Заявление\s[№ ]+([^ ]+)\s*от\s*(\d+.\d+.\d+)"
+            r"ЗАЯ\w+\s+О\s+ПРИС\w+\s+[№ ]+([^ ]+)\s+к\s+Дого\w+\s+прис\w+\s+\(о\s+пре\w+\s+бан\w+\s+Зай\w+\s+вне\s+КЛ/ЛК\)\s+от\s+(\d+.\d+.\d+)",
+            r"Акцес\w+\s+Дог\w+[№ ]+([^ ]+)\s+\(о\s+пред\w+\s+банк\w+\s+за\w+\)\s+от\s+(\d+.\d+.\d+)",
+            r"График\s+погашения\s+кредита\s+от\s+(\d+.\d+.\d+)\s+г\.\s+к\s+заявлению\s+[№ ]+([^ ]+)",
+            r"Договор\s+лизинга[№ ]+([^ ]+)\s+от\s+(\d+.\d+.\d+)",
+            r"Договор\s+финансового\s+лизинга[№ ]+([^ ]+)\s+от\s+(\d+.\d+.\d+)",
+            r"Заявление\s+[№ ]+([^ ]+)\s*от\s*(\d+.\d+.\d+)",
+        ]
+
+        hard_exprs = [
+            r"ДОГОВОР БАНКОВСКОГО ЗАЙМА № ?([^ ]+) \(.+\) от [«\"]?(\d+)[»\"]? (\w+) (\d+)",
+            r"Заявление о присоединении[№ ]+([^ ]+) от [«\"]?(\d+)[»\"]? (\w+) (\d+)",
+            r"ДОГОВОР БАНКОВСКОГО ЗАЙМА[№ ]+([^ ]+) в рамках соглашения кл/лк[ \w]*[«\"]?(\d+)[»\"]? (\w+) (\d+)",
+            r"^[№ ]+([^ ]+)\s*от\s+[«\"]?(\d+)[»\"]?\s+(\w+)\s+(\d+)",
+            r"договор\w? банков\w+ займа[№ ]+([^ ]+)\s+от\s+[«\"]?(\d+)[»\"]? (\w+) (\d+)",
+            r"Соглашение\s+о\s+предоставлении\s+кредитной\s+линии[№ ]+([^ ]+)\s+от\s+[«\"]?(\d+)[»\"]? (\w+) (\d+)",
+            r"Соглашение об открытии кредитной линии[№ ]+([^ ]+)\sот\s[«\"]?(\d+)[»\"]? (\w+) (\d+)",
+            r"ЗАЯВЛ\w+\s+О\s+ПРИСОЕ\w+[№ ]+([^ ]+)\s+к догов\w+ присое\w+.+?от [«\"]?(\d+)[»\"]? (\w+) (\d+)",
+            r"Акцес\w+\s+Дог\w+[№ ]+([^ ]+)\s*от\s*[«\"]?(\d+)[»\"]? (\w+) (\d+)",
+        ]
+
+        easy_pats = [re.compile(expr, re.IGNORECASE) for expr in easy_exprs]
+        hard_pats = [re.compile(expr, re.IGNORECASE) for expr in hard_exprs]
+
+        match = next((m for pat in easy_pats if (m := pat.search(dbz_data))), None)
+        if match:
+            dbz_id, dbz_date_str = match.groups()
+            if "." in dbz_id:
+                dbz_id, dbz_date_str = dbz_date_str, dbz_id
+
+            fmt = "%d.%m.%y" if len(dbz_date_str) == 8 else "%d.%m.%Y"
+            dbz_date = datetime.strptime(dbz_date_str, fmt).date()
+        else:
+            match = next((m for pat in hard_pats if (m := pat.search(dbz_data))), None)
+            if match:
+                dbz_id, day, month, year = match.groups()
+                month = self.patterns.months.get(month[0:3])
+                fmt = "%d.%m.%y" if len(year) == 2 else "%d.%m.%Y"
+                dbz_date = datetime.strptime(f"{day}.{month}.{year}", fmt).date()
+            else:
+                return dbz_data, None
+
+        return dbz_id, dbz_date
+
+    def find_subsidy_date(self, pat: re.Pattern) -> Optional[date]:
+        para = find(self.document.paragraphs, condition=lambda p: pat.search(p) is not None)
 
         if not para or (isinstance(para, str) and len(para) < 30):
-            self.document.docx_content, err = self.document.open_document(
-                backend=Backend.Docx2Python
-            )
-            if err:
-                return None, err
+            if not self.document.docx_content:
+                self.document.docx_content = self.document.open_document(
+                    backend=Backend.Docx2Python
+                )
 
             new_pat = re.compile(pat.pattern.replace(r"\.", "[.)]"))
             para = ""
@@ -484,9 +554,7 @@ class SubsidyParser:
                     para += " " + line
 
         if "ислам" in para:
-            return None, DateNotFoundError(
-                self.document.file_path.name, self.contract.contract_id, para
-            )
+            raise ValueError(f"Договор Исламского банка...")
 
         para = (
             para.replace('"', "")
@@ -502,26 +570,20 @@ class SubsidyParser:
         for month in self.patterns.months.keys():
             para = para.replace(month, f" {month}")
 
-        date_str = (
-            match.group(1)
-            if (match := self.patterns.complex_date.search(para))
-            else None
-        )
+        date_str = match.group(1) if (match := self.patterns.complex_date.search(para)) else None
 
         if not isinstance(date_str, str):
-            return None, DateNotFoundError(
-                self.document.file_path.name, self.contract.contract_id, para
-            )
+            raise DateNotFoundError(self.document.file_path.name, self.contract.contract_id, para)
 
         date_str = date_str.replace("-", ".").replace("/", ".")
 
         with suppress(ValueError):
             if len(date_str) == 10:
                 res = datetime.strptime(date_str, "%d.%m.%Y").date()
-                return res, None
+                return res
             elif len(date_str) == 8:
                 res = datetime.strptime(date_str, "%d.%m.%y").date()
-                return res, None
+                return res
 
         items: Tuple[str, ...] = tuple(
             item
@@ -532,9 +594,7 @@ class SubsidyParser:
         )
 
         if len(items) != 3:
-            return None, DateNotFoundError(
-                self.document.file_path.name, self.contract.contract_id, para
-            )
+            raise DateNotFoundError(self.document.file_path.name, self.contract.contract_id, para)
 
         if len(items[0]) == 2:
             day, month, year = items
@@ -562,9 +622,9 @@ class SubsidyParser:
 
         try:
             res = datetime.strptime(f"{day}.{month_num}.{year}", fmt).date()
-            return res, None
+            return res
         except ValueError as err:
-            return None, err
+            raise err
 
     def find_subsidy_loan_amount(self) -> Optional[float]:
         for table in self.document.doc.tables:
@@ -592,360 +652,160 @@ class SubsidyParser:
             amount = float(match_str)
             return amount
 
-    def find_interest_rate(self) -> IterableResult[List[InterestRate]]:
-        para_idx = index(
-            self.document.paragraphs,
-            condition=lambda p: p.startswith("6. ") and "," in p,
-        )
+    def parse_document(self) -> List[pd.DataFrame]:
+        self.contract.file_name = self.document.file_path.name
 
-        if not para_idx:
-            return [], IndexError(f"Could not find paragraph...")
+        self.contract.protocol_id = self.find_protocol_id()
+        if not self.contract.protocol_id:
+            logging.error("PARSE - WARNING - protocols not found")
+            raise ValueError("Protocol IDs not found...")
 
-        match = self.patterns.interest_rate_para.search(
-            "\n".join(self.document.paragraphs[para_idx:])
-        )
+        ibans = self.find_ibans()
+        if len(set(ibans)) > 1:
+            logging.error(f"PARSE - Different IBAN codes found in the document: {ibans}")
+            raise ValueError(f"IBANs are different - {ibans!r}")
+        if ibans:
+            self.contract.iban = ibans[0]
 
-        if not match:
-            return [], InterestRateMismatchError(f"Could not find text...")
+        self.contract.dbz_id, self.contract.dbz_date = self.find_dbz()
 
-        text = match.group(1).strip()
-
-        blacklist = {"ал жылдық", "ал сыйақы", "ал қалған", "а остальную"}
-        blacklist_re = re.compile(
-            r"((ал жылдық)|(ал сыйақы)|(ал қалған)|(а остальную))"
-        )
-        blacklist_count = len(blacklist_re.findall(text))
-        rate_count = len(self.patterns.interest_rates1.findall(text)) or len(
-            self.patterns.interest_rates2.findall(text)
-        )
-        enterpreneur_rate_after_subsidy = blacklist_count == 1 and rate_count > 3
-        if text.count("\n") > 1 and not (blacklist_count == 1 and rate_count == 3):
-            parts = [blacklist_re.split(part)[0] for part in text.split("\n")]
+        if not self.contract.iban:
+            logging.error("PARSE - WARNING - IBAN not found")
+            raise ValueError("IBANs not found...")
         else:
-            parts = [part.lower() for part in re.split(r"[,;][ -]", text)]
-        print("\n".join(parts))
-        interest_rates = []
-        nominal_rate = 0.0
-        for part in parts:
-            if enterpreneur_rate_after_subsidy and len(interest_rates) == (
-                (rate_count - 1) // 2
-            ):
-                break
+            logging.debug(f"PARSE - iban={self.contract.iban!r}")
 
-            if (
-                any(part.startswith(phrase) for phrase in blacklist)
-                or "получатель" in part
-            ):
-                continue
+        self.contract.start_date = self.find_subsidy_date(self.patterns.start_date)
+        logging.debug(f"PARSE - start_date={self.contract.start_date}")
+        if not self.contract.start_date:
+            raise DateNotFoundError(self.document.file_path.name, self.contract.contract_id)
 
-            rates = [
-                rate.replace(",", ".")
-                for rate in (
-                    self.patterns.interest_rates1.findall(part)
-                    or self.patterns.interest_rates2.findall(part)
-                )
-            ]
-            if not rates:
-                continue
-            rate = float(rates[0])
-
-            if nominal_rate == 0.0:
-                nominal_rate = rate
-                continue
-
-            interest_rate = InterestRate(
-                rate=rate, contract_id=self.contract.contract_id
-            )
-
-            dates_str = self.patterns.date.findall(part)
+        last_err = None
+        for pat in self.patterns.end_dates:
             try:
-                dates = [datetime.strptime(dt, "%d.%m.%Y") for dt in dates_str]
-            except ValueError:
-                dates_str = [
-                    tuple(d for d in dates_str if "год" not in d and "жыл" not in d)
-                ]
-                dates = []
-                for date_str in dates_str:
-                    if len(date_str[0]) == 2:
-                        day, month_str, year = tuple(date_str)
-                    else:
-                        year, day, month_str = tuple(date_str)
+                self.contract.end_date = self.find_subsidy_date(pat)
+                break
+            except (Exception, BaseException) as err:
+                last_err = err
 
-                    month = self.patterns.months.get(month_str)
-                    if not month:
-                        return [], ValueError(f"Month {month_str!r} not found...")
+        if last_err and not self.contract.end_date:
+            raise last_err
 
-                    dates.append(datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y"))
+        if not self.contract.end_date:
+            raise DateNotFoundError(self.document.file_path.name, self.contract.contract_id)
 
-            if len(dates) == 2:
-                interest_rate.start_date = dates[0].date()
-                interest_rate.end_date = dates[1].date()
-            interest_rates.append(interest_rate)
+        logging.debug(f"PARSE - end_date={self.contract.end_date}")
 
-        print("\n".join([repr(rate) for rate in interest_rates]))
+        self.contract.loan_amount = self.find_subsidy_loan_amount()
+        if not self.contract.loan_amount:
+            logging.error("PARSE - WARNING - loan_amount=None")
+        else:
+            logging.debug(f"PARSE - loan_amount={self.contract.loan_amount!r}")
 
-        return interest_rates, None
+        dfs = self.table_parser.parse_tables(self.contract)
 
-        # END
-        #
-        # dates = self.patterns.date.findall(text)
-        # rates = [
-        #     rate.replace(",", ".")
-        #     for rate in self.patterns.interest_rates.findall(text)
-        # ]
-        #
-        # dates = [datetime.strptime(date, "%d.%m.%Y") for date in dates]
-        #
-        # if not dates and len(rates) > 3 and (len(rates) - 1) % 3 == 0:
-        #     dates_str = [
-        #         tuple(d for d in dates if "год" not in d and "жыл" not in d)
-        #         for dates in self.patterns.interest_dates.findall(text)
-        #     ]
-        #
-        #     for date_str in dates_str:
-        #         if len(date_str[0]) == 2:
-        #             day, month_str, year = tuple(date_str)
-        #         else:
-        #             year, day, month_str = tuple(date_str)
-        #
-        #         month = self.patterns.months.get(month_str)
-        #         if not month:
-        #             raise ValueError(f"Month {month_str!r} not found...")
-        #
-        #         dates.append(datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y"))
-        #
-        # subsidized_dates = [dates[i] for i in range(0, len(dates), 2)]
-        # entrepreneur_dates = [dates[i] for i in range(1, len(dates), 2)]
-        #
-        # if not is_progressive(subsidized_dates) or not is_progressive(
-        #     entrepreneur_dates
-        # ):
-        #     subsidized_dates = [dates[i] for i in range(0, len(dates) // 2)]
-        #     entrepreneur_dates = [dates[i] for i in range(len(dates) // 2, len(dates))]
-        #     if not is_progressive(subsidized_dates) or not is_progressive(
-        #         entrepreneur_dates
-        #     ):
-        #         raise InterestRateMismatchError(
-        #             f"Could not generate dates in a progressive manner {dates!r}"
-        #         )
-        #
-        # nominal_rate = float(rates[0])
-        # subsidized_rates = [float(rates[i]) for i in range(1, len(rates), 2)]
-        # entrepreneur_rates = [float(rates[i]) for i in range(2, len(rates), 2)]
-        #
-        # if not subsidized_rates or not entrepreneur_rates:
-        #     raise InterestRateMismatchError(
-        #         f"Could not find subsidy or nominal rates in {text!r}"
-        #     )
-        #
-        # interest_rates: List[InterestRate] = []
-        #
-        # try:
-        #     for (
-        #         subsidized_rate,
-        #         entrepreneur_rate,
-        #     ) in itertools.zip_longest(subsidized_rates, entrepreneur_rates):
-        #         if subsidized_rate + entrepreneur_rate == nominal_rate:
-        #             interest_rate = InterestRate(rate=subsidized_rate)
-        #             interest_rates.append(interest_rate)
-        #             continue
-        #
-        #         err_msg = (
-        #             f"{subsidized_rate=} + {entrepreneur_rate=} != {nominal_rate=}"
-        #         )
-        #         raise InterestRateMismatchError(err_msg)
-        # except InterestRateMismatchError as err:
-        #     interest_rates.clear()
-        #     subsidized_rates = [float(rates[i]) for i in range(1, len(rates) // 2 + 1)]
-        #     entrepreneur_rates = [
-        #         float(rates[i]) for i in range(len(rates) // 2 + 1, len(rates))
-        #     ]
-        #
-        #     for subsidized_rate, entrepreneur_rate in zip(
-        #         subsidized_rates, entrepreneur_rates
-        #     ):
-        #         if subsidized_rate + entrepreneur_rate == nominal_rate:
-        #             interest_rate = InterestRate(rate=subsidized_rate)
-        #             interest_rates.append(interest_rate)
-        #             continue
-        #
-        #         err_msg = f"({err}) or ({subsidized_rate=} + {entrepreneur_rate=} != {nominal_rate=})"
-        #         raise InterestRateMismatchError(err_msg)
-        #
-        # if dates:
-        #     for i in range(0, len(dates), 2):
-        #         interest_rates[i // 2].start_date = dates[i]
-        #         interest_rates[i // 2].end_date = dates[i + 1]
-        # try:
-        #     are_dates_progressive = is_progressive(interest_rates)
-        # except TypeError as e:
-        #     raise e
-        #
-        # if not are_dates_progressive:
-        #     raise InterestRateMismatchError(
-        #         f"Dates are not progressive {interest_rates=}"
-        #     )
+        return dfs
 
-    def parse_document(
-        self, todo: Dict[str, bool]
-    ) -> IterableResult[List[pd.DataFrame]]:
-        if todo.get("protocol_ids") is True:
-            self.protocol_ids.extend(
-                pid
-                for pid in self.find_protocol_ids()
-                if pid not in [p.protocol_id for p in self.protocol_ids]
+
+def parse_document(
+    contract_id: str,
+    download_folder: Path,
+    patterns: RegexPatterns,
+    db: DatabaseManager,
+) -> None:
+    os.chdir(os.getenv("project_folder"))
+
+    if multiprocessing.current_process().name != "MainProcess":
+        logging.disable(logging.CRITICAL)
+
+    contract = ParseContract(contract_id=contract_id, error=Error(contract_id=contract_id))
+
+    documents_folder = download_folder / contract_id / "documents"
+    try:
+        documents: List[SubsidyDocument] = [
+            doc
+            for file_path in documents_folder.iterdir()
+            if (doc := SubsidyDocument(file_path)).is_subsidy_file(patterns)
+        ]
+    except (KeyError, ValueError, FileNotFoundError) as err:
+        contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+        contract.error.human_readable = contract.error.get_human_readable()
+        contract.error.save(db)
+        contract.save(db)
+        return
+
+    document_count = len(documents)
+
+    if documents:
+        dfs: List[pd.DataFrame] = []
+        for jdx, document in enumerate(documents, start=1):
+            parser = SubsidyParser(
+                document=document,
+                contract=contract,
+                patterns=patterns,
             )
 
-            if not self.protocol_ids:
-                logging.error("PARSE - WARNING - protocols not found")
-            else:
-                self.protocol_ids[-1].newest = True
-                logging.debug(f"PARSE - found {len(self.protocol_ids)} protocols")
+            if document_count > 1:
+                logging.info(f"PARSE - {jdx}/{len(documents)} - {document.file_path.name!r}")
+            try:
+                dfs.extend(parser.parse_document())
+            except (Exception, BaseException) as err:
+                logging.error(f"{err!r}")
+                contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+                contract.error.human_readable = contract.error.get_human_readable()
+                contract.error.save(db)
+                contract.save(db)
+                return
+        try:
+            if len(dfs) == 2 and not compare(dfs[0], dfs[1]):
+                raise DataFrameInequalityError("DataFrames not equal to each other")
+        except DataFrameInequalityError as err:
+            logging.error(f"{err!r}")
+            contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+            contract.error.human_readable = contract.error.get_human_readable()
+            contract.error.save(db)
+            contract.save(db)
+            return
 
-        if todo.get("iban") is True:
-            ibans = self.find_ibans()
-            if len(set(ibans)) > 1:
-                logging.error(
-                    f"PARSE - Different IBAN codes found in the document: {ibans}"
-                )
-            if ibans:
-                self.contract.iban = ibans[0]
+        if len(dfs):
+            contract.df = dfs[0]
+    else:
+        try:
+            raise ContractsNofFoundError(f"EDO - {contract_id} does not have subsidy contracts...")
+        except ContractsNofFoundError as err:
+            logging.error(f"{err!r}")
+            contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+            contract.error.human_readable = contract.error.get_human_readable()
 
-            if not self.contract.iban:
-                logging.error("PARSE - WARNING - IBAN not found")
-            else:
-                logging.debug(f"PARSE - iban={self.contract.iban!r}")
-
-        if todo.get("start_date") is True:
-            self.contract.start_date, err = self.find_subsidy_date(
-                self.patterns.start_date
-            )
-            logging.debug(f"PARSE - start_date={self.contract.start_date}")
-            if err:
-                return [], err
-
-        if todo.get("end_date") is True:
-            self.contract.end_date, err = self.find_subsidy_date(
-                self.patterns.end_date1
-            )
-            if not self.contract.end_date:
-                self.contract.end_date, err = self.find_subsidy_date(
-                    self.patterns.end_date2
-                )
-
-            logging.debug(f"PARSE - end_date={self.contract.end_date}")
-            if err:
-                return [], err
-
-        # interest_rates, err = self.find_interest_rate()
-        # if err:
-        #     return [], err
-
-        if todo.get("interest_rates") is True:
-            self.interest_rates.extend(
-                [
-                    InterestRate(
-                        rate=10.0,
-                        start_date=self.contract.start_date,
-                        end_date=self.contract.end_date,
-                        contract_id=self.contract.contract_id,
-                    )
-                ]
-            )
-
-        if todo.get("loan_amount") is True:
-            self.contract.loan_amount = self.find_subsidy_loan_amount()
-            if not self.contract.loan_amount:
-                logging.error("PARSE - WARNING - loan_amount=None")
-            else:
-                logging.debug(f"PARSE - loan_amount={self.contract.loan_amount!r}")
-
-        dfs, err = self.table_parser.parse_tables(self.contract)
-
-        return dfs, err
+    contract.error.save(db)
+    contract.save(db)
 
 
-def parse_documents(db: DatabaseManager, months_json_path: Path) -> None:
+def parse_documents(db: DatabaseManager, months_json_path: Path, download_folder: Path) -> None:
     with months_json_path.open("r", encoding="utf-8") as f:
         months = json.load(f)
     patterns = RegexPatterns(months=months)
     del months
 
     contracts = db.execute(
-        "SELECT id, save_folder FROM edo_contracts WHERE DATE(date_modified) = ?",
-        (date.today().isoformat(),),
+        """
+        SELECT id FROM contracts
+        """
     )
 
-    count = len(contracts)
-    for idx, (contract_id, save_folder) in enumerate(contracts, start=1):
-        logging.info(f"PARSE - {idx:02}/{count} - {contract_id}")
+    # contracts = db.execute("SELECT id FROM contracts")
 
-        parse_contract = ParseContract(contract_id=contract_id)
-        interest_rates: List[InterestRate] = []
-        protocol_ids: List[ProtocolID] = []
+    # input_data = [(contract_id, download_folder, patterns, db) for (contract_id,) in contracts]
+    # with Pool(processes=os.cpu_count()) as pool:
+    #     pool = cast(multiprocessing.pool.Pool, pool)
+    #     pool.starmap(parse_document, tqdm(input_data, total=len(input_data)))
 
-        todo = {
-            "protocol_ids": not protocol_ids,
-            "iban": parse_contract.iban is None,
-            "start_date": parse_contract.start_date is None,
-            "end_date": parse_contract.end_date is None,
-            "interest_rates": not interest_rates,
-            "loan_amount": parse_contract.loan_amount is None,
-        }
-
-        # if not any(todo.values()):
-        #     continue
-
-        save_folder = Path(save_folder)
-        documents_folder = save_folder / "documents"
-        safe_extract(save_folder / "contract.zip", documents_folder=documents_folder)
-
-        documents: List[SubsidyDocument] = [
-            doc
-            for file_path in documents_folder.iterdir()
-            if (doc := SubsidyDocument(file_path)).is_subsidy_file(patterns)
-        ]
-        document_count = len(documents)
-
-        if documents:
-            dfs: List[pd.DataFrame] = []
-            for jdx, document in enumerate(documents, start=1):
-                parser = SubsidyParser(
-                    document=document,
-                    contract=parse_contract,
-                    interest_rates=interest_rates,
-                    protocol_ids=protocol_ids,
-                    patterns=patterns,
-                )
-
-                if document_count > 1:
-                    logging.info(
-                        f"PARSE - {jdx}/{len(documents)} - {document.file_path.name!r}"
-                    )
-                doc_dfs, err = parser.parse_document(todo)
-                if err:
-                    logging.error(f"{err!r}")
-                    parse_contract.error = format_error(err)
-
-                dfs.extend(doc_dfs)
-
-            if len(dfs) == 2 and not compare(dfs[0], dfs[1]):
-                err = DataFrameInequalityError("DataFrames not equal to each other")
-                parse_contract.error = format_error(err)
-        else:
-            err = ContractsNofFoundError(
-                f"EDO - {contract_id} does not have subsidy contracts..."
-            )
-            logging.error(err)
-            parse_contract.error = format_error(err)
-
-        parse_contract.save(db)
-
-        for rate in interest_rates:
-            rate.save(db)
-
-        for protocol_id in protocol_ids:
-            protocol_id.save(db)
-
-        # if any(todo.values()):
-        #     contract.save(db)
+    # for idx, (contract_id,) in enumerate(tqdm(contracts), start=1):
+    for idx, (contract_id,) in enumerate(contracts, start=1):
+        # logging.info(f"PARSE - {idx:02}/{len(contracts)} - {contract_id}")
+        parse_document(
+            contract_id=contract_id,
+            download_folder=download_folder,
+            patterns=patterns,
+            db=db,
+        )

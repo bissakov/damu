@@ -1,5 +1,6 @@
 import io
 import logging
+import os
 import urllib.parse
 from typing import List, cast
 
@@ -11,14 +12,13 @@ from requests import HTTPError
 from requests.exceptions import SSLError
 
 from src.error import retry
-from src.utils.utils import get_from_env
 
 
 class TelegramAPI:
     def __init__(self) -> None:
         self.session = requests.Session()
         self.session.mount("http://", requests.adapters.HTTPAdapter(max_retries=5))
-        self.token, self.chat_id = get_from_env("TOKEN"), get_from_env("CHAT_ID")
+        self.token, self.chat_id = os.environ["TOKEN"], os.environ["CHAT_ID"]
         self.api_url = f"https://api.telegram.org/bot{self.token}/"
 
         self.pending_messages: List[str] = []

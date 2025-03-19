@@ -9,8 +9,10 @@ venv/
 .ruff_cache/
 .git/
 unused/
+temp/
 
 *.zip
 .env
 *.db
 *.sqlite
+~$*
