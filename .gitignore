@@ -10,9 +10,12 @@ venv/
 .git/
 unused/
 temp/
+backup
 
 *.zip
 .env
 *.db
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 ~$*
