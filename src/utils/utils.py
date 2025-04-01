@@ -3,6 +3,7 @@ import logging
 import re
 import zipfile
 import zlib
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Union
 
@@ -90,31 +91,43 @@ def normalize_text(text: str) -> str:
 
 
 def compare(df1: pd.DataFrame, df2: pd.DataFrame) -> bool:
-    if (
-        (df1.empty and df2.empty)
-        or (df1.empty and not df2.empty)
-        or (df2.empty and not df1.empty)
-    ):
+    if (df1.empty and df2.empty) or (df1.empty and not df2.empty) or (df2.empty and not df1.empty):
         return True
 
     if len(df1) != len(df2):
         return False
 
     return next(
-        (
-            False
-            for idx in df1.index[~df1["total"]]
-            if not df1.loc[idx].equals(df2.loc[idx])
-        ),
+        (False for idx in df1.index[~df1["total"]] if not df1.loc[idx].equals(df2.loc[idx])),
         True,
     )
 
 
-def save_to_bytes(
-    write_func: Callable[[BinaryIO], Any], compress: bool = True
-) -> bytes:
+def save_to_bytes(write_func: Callable[[BinaryIO], Any], compress: bool = True) -> bytes:
     with io.BytesIO() as buffer_io:
         write_func(buffer_io)
         data = buffer_io.getvalue()
 
     return zlib.compress(data) if compress else data
+
+
+def days360(
+    start_date: Union[date, datetime, pd.Timestamp],
+    end_date: Union[date, datetime, pd.Timestamp],
+    method: bool = False,
+) -> int:
+    d1, m1, y1 = start_date.day, start_date.month, start_date.year
+    d2, m2, y2 = end_date.day, end_date.month, end_date.year
+
+    if method:
+        if d1 == 31:
+            d1 = 30
+        if d2 == 31:
+            d2 = 30
+    else:
+        if d1 == 31:
+            d1 = 30
+        if d2 == 31 and d1 == 30:
+            d2 = 30
+
+    return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1)
