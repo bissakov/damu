@@ -1,13 +1,10 @@
 import io
 import logging
 import multiprocessing
-import os
 import traceback
 import zlib
 from datetime import date, datetime
-from multiprocessing import Pool
-from multiprocessing.pool import Pool as _Pool
-from typing import Dict, NamedTuple, Optional, Tuple, Union, cast
+from typing import Dict, List, NamedTuple, Optional, Tuple, Union, cast
 
 import numpy as np
 import openpyxl
@@ -22,7 +19,7 @@ from tqdm import tqdm
 from src.error import BankNotSupportedError
 from src.subsidy import Error, SubsidyContract
 from src.utils.db_manager import DatabaseManager
-from src.utils.utils import save_to_bytes
+from src.utils.utils import days360, save_to_bytes
 
 
 class BankExcelMismatchError(Exception):
@@ -90,8 +87,6 @@ def format_style_save(original_df: pd.DataFrame) -> openpyxl.Workbook:
         "difference2": "Разница между субсидируемой и несубсидируемой частями",
         "principal_balance_check": "Проверка корректности остатка основного долга после произведенного погашения",
     }
-
-    # df.loc[df["total"], "debt_repayment_date"] = "Всего:"
 
     df = cast(pd.DataFrame, df.loc[:, list(mapping.keys())])
 
@@ -232,30 +227,12 @@ def shift_workbook(source_df: pd.DataFrame, rows: int, cols: int) -> openpyxl.Wo
     return wb
 
 
-def days360(
-    start_date: Union[date, datetime, pd.Timestamp],
-    end_date: Union[date, datetime, pd.Timestamp],
-    method: bool = False,
-) -> int:
-    d1, m1, y1 = start_date.day, start_date.month, start_date.year
-    d2, m2, y2 = end_date.day, end_date.month, end_date.year
-
-    if method:
-        if d1 == 31:
-            d1 = 30
-        if d2 == 31:
-            d2 = 30
-    else:
-        if d1 == 31:
-            d1 = 30
-        if d2 == 31 and d1 == 30:
-            d2 = 30
-
-    return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1)
-
-
 def calculate_day_count(debt_repayment_dates: pd.Series, bank: str) -> pd.Series:
     match bank:
+        case "АО «Халык-Лизинг»":
+            result = debt_repayment_dates.diff().dt.days.astype(float)
+            result = pd.Series(np.where((result - 30).abs() < 5, 30.0, result))
+            return result
         case (
             'АО "Банк "Bank RBK"'
             | "АО «Bereke Bank» (ранее ДБ АО «Сбербанк»)"
@@ -298,6 +275,141 @@ def diff(
             return days360(date1, date2)
         case _:
             return (date1 - date2).days
+
+
+def calculate_subsidy_sum_diffs(
+    df: pd.DataFrame, contract: SubsidyContract
+) -> List[Tuple[int, int, int]]:
+    subsidy_sum_diffs: List[Tuple[int, int, int]] = []
+    if (
+        contract.rate_four_year != 0
+        and contract.rate_four_year != contract.rate_one_two_three_year
+        and contract.start_date_four_year < contract.end_date
+    ):
+        mask = df["debt_repayment_date"] > contract.start_date_four_year
+        idx = cast(int, mask.idxmax())
+        subsidy_sum_diffs.append(
+            (
+                idx,
+                (contract.start_date_four_year - df.loc[idx - 1, "debt_repayment_date"]).days,
+                (df.loc[idx, "debt_repayment_date"] - contract.start_date_four_year).days,
+            )
+        )
+        df.loc[mask, "rate"] = contract.rate_four_year
+        if (
+            contract.rate_five_year != 0
+            and contract.rate_five_year != contract.rate_four_year
+            and contract.start_date_five_year < contract.end_date
+        ):
+            mask = df["debt_repayment_date"] > contract.start_date_five_year
+            idx = mask.idxmax()
+            subsidy_sum_diffs.append(
+                (
+                    idx,
+                    (contract.start_date_five_year - df.loc[idx - 1, "debt_repayment_date"]).days,
+                    (df.loc[idx, "debt_repayment_date"] - contract.start_date_five_year).days,
+                )
+            )
+            df.loc[mask, "rate"] = contract.rate_five_year
+            if (
+                contract.rate_six_seven_year != 0
+                and contract.rate_six_seven_year != contract.rate_five_year
+                and contract.start_date_six_seven_year < contract.end_date
+            ):
+                mask = df["debt_repayment_date"] > contract.start_date_six_seven_year
+                idx = mask.idxmax()
+                subsidy_sum_diffs.append(
+                    (
+                        idx,
+                        (
+                            contract.start_date_six_seven_year
+                            - df.loc[idx - 1, "debt_repayment_date"]
+                        ).days,
+                        (
+                            df.loc[idx, "debt_repayment_date"] - contract.start_date_six_seven_year
+                        ).days,
+                    )
+                )
+                df.loc[mask, "rate"] = contract.rate_six_seven_year
+
+    return subsidy_sum_diffs
+
+
+def calculate_subsidy_sum(df: pd.DataFrame, bank: str) -> None:
+    if bank in {
+        'АО "Банк ЦентрКредит"',
+        'АО "First Heartland Jusan Bank"',
+        'АО "Нурбанк"',
+        'АО "ForteBank"',
+        'АО "Банк "Bank RBK"',
+        'АО "Лизинг Групп"',
+        'АО "Казахстанская Иджара Компания"',
+    }:
+        df["subsidy_sum"] = (
+            df["principal_debt_balance"].shift(1)
+            * (df["rate"] / df["day_year_count"])
+            * df["day_count"]
+        )
+    elif bank in {
+        'АО "Евразийский банк"',
+        'АО "Народный Банк Казахстана"',
+        "АО «Bereke Bank» (ранее ДБ АО «Сбербанк»)",
+        "АО «Bereke Bank» (дочерний банк Lesha Bank LLC (Public))",
+        "АО «Халык-Лизинг»",
+    }:
+        df["subsidy_sum"] = (
+            df["principal_debt_balance"] * (df["rate"] / df["day_year_count"]) * df["day_count"]
+        )
+
+
+def calculate_principal_balance_check(df: pd.DataFrame, bank: str) -> None:
+    if bank in {
+        'АО "Банк ЦентрКредит"',
+        'АО "First Heartland Jusan Bank"',
+        'АО "Нурбанк"',
+        'АО "ForteBank"',
+        'АО "Банк "Bank RBK"',
+    }:
+        # FIXME =(B37-C37)=B38
+        df["principal_balance_check"] = np.isclose(
+            df["principal_debt_balance"].shift(1) - df["principal_debt_repayment_amount"],
+            df["principal_debt_balance"],
+        )
+
+    elif bank in {
+        'АО "Евразийский банк"',
+        'АО "Народный Банк Казахстана"',
+        "АО «Bereke Bank» (ранее ДБ АО «Сбербанк»)",
+        "АО «Bereke Bank» (дочерний банк Lesha Bank LLC (Public))",
+        "АО «Халык-Лизинг»",
+    }:
+        if "Bereke Bank" in bank or "Народный Банк" in bank:
+            df["principal_balance_check"] = np.isclose(
+                df["principal_debt_balance"]
+                .shift()
+                .fillna(0.0)
+                .sub(df["principal_debt_repayment_amount"].shift().fillna(0.0)),
+                df["principal_debt_balance"],
+            )
+        else:
+            df["principal_balance_check"] = np.where(
+                df.index == df.index[-1],
+                np.isclose(
+                    df["principal_debt_balance"] - df["principal_debt_repayment_amount"],
+                    0.0,
+                ),
+                np.isclose(
+                    df["principal_debt_balance"] - df["principal_debt_repayment_amount"],
+                    df["principal_debt_balance"].shift(-1),
+                ),
+            )
+
+    elif bank in {'АО "Лизинг Групп"', 'АО "Казахстанская Иджара Компания"'}:
+        # FIXME =(B37-C37)=B38
+        df["principal_balance_check"] = np.isclose(
+            df["principal_debt_balance"] - df["principal_debt_repayment_amount"],
+            df["principal_debt_balance"].shift(-1),
+        )
 
 
 def create_macro(
@@ -357,118 +469,10 @@ def create_macro(
     df["rate"] = contract.rate_one_two_three_year
     df["day_year_count"] = contract.year_count
 
-    subsidy_sum_diffs = []
-    if (
-        contract.rate_four_year != 0
-        and contract.rate_four_year != contract.rate_one_two_three_year
-        and contract.start_date_four_year < contract.end_date
-    ):
-        mask = df["debt_repayment_date"] > contract.start_date_four_year
-        idx = mask.idxmax()
-        subsidy_sum_diffs.append(
-            (
-                idx,
-                (contract.start_date_four_year - df.loc[idx - 1, "debt_repayment_date"]).days,
-                (df.loc[idx, "debt_repayment_date"] - contract.start_date_four_year).days,
-            )
-        )
-        df.loc[mask, "rate"] = contract.rate_four_year
-        if (
-            contract.rate_five_year != 0
-            and contract.rate_five_year != contract.rate_four_year
-            and contract.start_date_five_year < contract.end_date
-        ):
-            mask = df["debt_repayment_date"] > contract.start_date_five_year
-            idx = mask.idxmax()
-            subsidy_sum_diffs.append(
-                (
-                    idx,
-                    (contract.start_date_five_year - df.loc[idx - 1, "debt_repayment_date"]).days,
-                    (df.loc[idx, "debt_repayment_date"] - contract.start_date_five_year).days,
-                )
-            )
-            df.loc[mask, "rate"] = contract.rate_five_year
-            if (
-                contract.rate_six_seven_year != 0
-                and contract.rate_six_seven_year != contract.rate_five_year
-                and contract.start_date_six_seven_year < contract.end_date
-            ):
-                mask = df["debt_repayment_date"] > contract.start_date_six_seven_year
-                idx = mask.idxmax()
-                subsidy_sum_diffs.append(
-                    (
-                        idx,
-                        (
-                            contract.start_date_six_seven_year
-                            - df.loc[idx - 1, "debt_repayment_date"]
-                        ).days,
-                        (
-                            df.loc[idx, "debt_repayment_date"] - contract.start_date_six_seven_year
-                        ).days,
-                    )
-                )
-                df.loc[mask, "rate"] = contract.rate_six_seven_year
-
+    subsidy_sum_diffs = calculate_subsidy_sum_diffs(df, contract)
     df["day_count"] = calculate_day_count(df["debt_repayment_date"], contract.bank)
-
-    match contract.bank:
-        case (
-            'АО "Банк ЦентрКредит"'
-            | 'АО "First Heartland Jusan Bank"'
-            | 'АО "Нурбанк"'
-            | 'АО "ForteBank"'
-            | 'АО "Банк "Bank RBK"'
-        ):
-            df["subsidy_sum"] = (
-                (df["principal_debt_balance"].shift(1) * df["rate"]) / df["day_year_count"]
-            ) * df["day_count"]
-
-            # FIXME =(B37-C37)=B38
-            df["principal_balance_check"] = np.isclose(
-                df["principal_debt_balance"].shift(1) - df["principal_debt_repayment_amount"],
-                df["principal_debt_balance"],
-            )
-
-        case (
-            'АО "Евразийский банк"'
-            | 'АО "Народный Банк Казахстана"'
-            | "АО «Bereke Bank» (ранее ДБ АО «Сбербанк»)"
-            | "АО «Bereke Bank» (дочерний банк Lesha Bank LLC (Public))"
-            | "АО «Халык-Лизинг»"
-        ):
-            df["subsidy_sum"] = (
-                df["principal_debt_balance"] * (df["rate"] / df["day_year_count"]) * df["day_count"]
-            )
-
-            if "Bereke Bank" in contract.bank or "Народный Банк" in contract.bank:
-                df["principal_balance_check"] = np.isclose(
-                    df["principal_debt_balance"]
-                    .shift()
-                    .fillna(0.0)
-                    .sub(df["principal_debt_repayment_amount"].shift().fillna(0.0)),
-                    df["principal_debt_balance"],
-                )
-            else:
-                df["principal_balance_check"] = np.isclose(
-                    df["principal_debt_balance"] - df["principal_debt_repayment_amount"],
-                    df["principal_debt_balance"].shift(-1),
-                )
-
-        case 'АО "Лизинг Групп"' | 'АО "Казахстанская Иджара Компания"':
-            df["subsidy_sum"] = (
-                df["principal_debt_balance"].shift(1)
-                * (df["rate"] / df["day_year_count"])
-                * df["day_count"]
-            )
-
-            # FIXME =(B37-C37)=B38
-            df["principal_balance_check"] = np.isclose(
-                df["principal_debt_balance"] - df["principal_debt_repayment_amount"],
-                df["principal_debt_balance"].shift(-1),
-            )
-
-        case _:
-            raise BankNotSupportedError(f"{contract.bank!r} is not supported yet...")
+    calculate_subsidy_sum(df, contract.bank)
+    calculate_principal_balance_check(df, contract.bank)
 
     for idx, diff1, diff2 in subsidy_sum_diffs:
         df.loc[idx, "subsidy_sum"] = (
