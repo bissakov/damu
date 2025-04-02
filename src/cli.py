@@ -2,7 +2,6 @@ import os
 import platform
 import sys
 import tempfile
-import zlib
 from pathlib import Path
 from typing import Tuple
 
@@ -20,9 +19,7 @@ db = DatabaseManager(database)
 
 @click.command()
 @click.option("--contract_id", required=False)
-@click.option(
-    "--random", is_flag=True, help="Select a random contract ID from the database"
-)
+@click.option("--random", is_flag=True, help="Select a random contract ID from the database")
 @click.option("--is_shifted", is_flag=True)
 def main(
     contract_id: str = None,
@@ -39,9 +36,7 @@ def main(
     with db.connect() as cursor:
         if random:
             if is_shifted:
-                cursor.execute(
-                    "SELECT id, shifted_macro FROM macros ORDER BY RANDOM() LIMIT 1"
-                )
+                cursor.execute("SELECT id, shifted_macro FROM macros ORDER BY RANDOM() LIMIT 1")
             else:
                 cursor.execute("SELECT id, macro FROM macros ORDER BY RANDOM() LIMIT 1")
         else:
@@ -68,8 +63,6 @@ def main(
     if not result:
         click.echo(message=f"Macro of {contract_id!r} not found!", err=True)
         return
-
-    macro_buffer = zlib.decompress(macro_buffer)
 
     with tempfile.NamedTemporaryFile("wb", delete=False, suffix=".xlsx") as tmp:
         tmp.write(macro_buffer)

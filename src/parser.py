@@ -35,7 +35,7 @@ from src.subsidy import Error, ParseContract
 from src.utils.collections import find, index
 from src.utils.db_manager import DatabaseManager
 from src.utils.office import FileFormat, Office, OfficeType
-from src.utils.utils import compare
+from src.utils.utils import compare, get_column_mapping
 
 
 @dataclass
@@ -184,24 +184,7 @@ class TableParser:
         self.document = document
         self.patterns = patterns
 
-        self.human_readable = {
-            "debt_repayment_date": "Дата погашения основного долга",
-            "principal_debt_balance": "Сумма остатка основного долга",
-            "principal_debt_repayment_amount": "Сумма погашения основного долга",
-            "agency_fee_amount": "Сумма вознаграждения, оплачиваемая финансовым агентством",
-            "recipient_fee_amount": "Сумма вознаграждения, оплачиваемая Получателем",
-            "total_accrued_fee_amount": "Итого сумма начисленного вознаграждения",
-            "day_count": "Кол-во дней",
-            "rate": "Ставка вознаграждения",
-            "day_year_count": "Кол-во дней в году",
-            "subsidy_sum": "Сумма рассчитанной субсидии",
-            "bank_excel_diff": "Разница между расчетом Банка и Excel",
-            "check_total": 'Проверка корректности столбца "Итого начисленного вознаграждения"',
-            "ratio": "Соотношение суммы субсидий на итоговую сумму начисленного вознаграждения",
-            "difference2": "Разница между субсидируемой и несубсидируемой частями",
-            "principal_balance_check": "Проверка корректности остатка основного долга после произведенного погашения",
-        }
-
+        self.human_readable = get_column_mapping()
         self.expected_columns = [
             "debt_repayment_date",
             "principal_debt_balance",

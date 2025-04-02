@@ -2,7 +2,6 @@ import io
 import logging
 import multiprocessing
 import traceback
-import zlib
 from datetime import date, datetime
 from typing import Dict, List, NamedTuple, Optional, Tuple, Union, cast
 
@@ -19,7 +18,7 @@ from tqdm import tqdm
 from src.error import BankNotSupportedError
 from src.subsidy import Error, SubsidyContract
 from src.utils.db_manager import DatabaseManager
-from src.utils.utils import days360, save_to_bytes
+from src.utils.utils import days360, get_column_mapping, save_to_bytes
 
 
 class BankExcelMismatchError(Exception):
@@ -70,23 +69,7 @@ def format_style_save(original_df: pd.DataFrame) -> openpyxl.Workbook:
 
     df: pd.DataFrame = original_df.copy()
 
-    mapping = {
-        "debt_repayment_date": "Дата погашения основного долга",
-        "principal_debt_balance": "Сумма остатка основного долга",
-        "principal_debt_repayment_amount": "Сумма погашения основного долга",
-        "agency_fee_amount": "Сумма вознаграждения, оплачиваемая финансовым агентством",
-        "recipient_fee_amount": "Сумма вознаграждения, оплачиваемая Получателем",
-        "total_accrued_fee_amount": "Итого сумма начисленного вознаграждения",
-        "day_count": "Кол-во дней",
-        "rate": "Ставка вознаграждения",
-        "day_year_count": "Кол-во дней в году",
-        "subsidy_sum": "Сумма рассчитанной субсидии",
-        "bank_excel_diff": "Разница между расчетом Банка и Excel",
-        "check_total": 'Проверка корректности столбца "Итого начисленного вознаграждения"',
-        "ratio": "Соотношение суммы субсидий на итоговую сумму начисленного вознаграждения",
-        "difference2": "Разница между субсидируемой и несубсидируемой частями",
-        "principal_balance_check": "Проверка корректности остатка основного долга после произведенного погашения",
-    }
+    mapping = get_column_mapping()
 
     df = cast(pd.DataFrame, df.loc[:, list(mapping.keys())])
 
@@ -164,13 +147,12 @@ def format_style_save(original_df: pd.DataFrame) -> openpyxl.Workbook:
 
 
 def shift_workbook(source_df: pd.DataFrame, rows: int, cols: int) -> openpyxl.Workbook:
-    df = source_df.loc[~source_df["total"]].copy()
+    df: pd.DataFrame = source_df.loc[~source_df["total"]].copy()
     df.drop("total", axis=1, inplace=True)
 
     df = df[
         [
             "debt_repayment_date",
-            "principal_debt_repayment_amount",
             "agency_fee_amount",
             "recipient_fee_amount",
             "total_accrued_fee_amount",
@@ -181,30 +163,11 @@ def shift_workbook(source_df: pd.DataFrame, rows: int, cols: int) -> openpyxl.Wo
     df["debt_repayment_date"] = pd.to_datetime(df["debt_repayment_date"]).dt.strftime("%d.%m.%Y")
     df["debt_repayment_date"] = df["debt_repayment_date"].astype(str)
 
-    df.rename(
-        columns={
-            "debt_repayment_date": "Дата погашения основного долга",
-            "principal_debt_balance": "Сумма остатка основного долга",
-            "principal_debt_repayment_amount": "Сумма погашения основного долга",
-            "agency_fee_amount": "Сумма вознаграждения, оплачиваемая финансовым агентством",
-            "recipient_fee_amount": "Сумма вознаграждения, оплачиваемая Получателем",
-            "total_accrued_fee_amount": "Итого сумма начисленного вознаграждения",
-            "day_count": "Кол-во дней",
-            "rate": "Ставка вознаграждения",
-            "day_year_count": "Кол-во дней в году",
-            "subsidy_sum": "Сумма рассчитанной субсидии",
-            "bank_excel_diff": "Разница между расчетом Банка и Excel",
-            "check_total": 'Проверка корректности столбца "Итого начисленного вознаграждения"',
-            "ratio": "Соотношение суммы субсидий на итоговую сумму начисленного вознаграждения",
-            "difference2": "Разница между субсидируемой и несубсидируемой частями",
-            "principal_balance_check": "Проверка корректности остатка основного долга после произведенного погашения",
-        },
-        inplace=True,
-    )
+    df.rename(columns=get_column_mapping(), inplace=True)
 
     df_excel_buffer = io.BytesIO()
     with pd.ExcelWriter(cast(WriteExcelBuffer, df_excel_buffer), engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Sheet1")
+        df.to_excel(writer, index=False, header=False, sheet_name="Sheet1")
     df_excel_buffer.seek(0)
 
     source_wb = openpyxl.load_workbook(df_excel_buffer)
@@ -521,7 +484,7 @@ def create_macro(
 
 
 def validate_macro(df_bytes: bytes) -> None:
-    df = pd.read_parquet(io.BytesIO(zlib.decompress(df_bytes)), engine="fastparquet")
+    df = pd.read_parquet(io.BytesIO(df_bytes), engine="fastparquet")
     if not all(df.loc[1:, "bank_excel_diff"].abs() <= 0.01):
         raise BankExcelMismatchError(
             f"Грубые расхождения в колонке 'Разница между расчетом Банка и Excel'"
@@ -539,16 +502,6 @@ def validate_macro(df_bytes: bytes) -> None:
 def process_macro(contract: SubsidyContract) -> Macro:
     if multiprocessing.current_process().name != "MainProcess":
         logging.disable(logging.CRITICAL)
-
-    # if contract.contract_id != "b4073898-9abc-4d17-8418-67b858bb03bb":
-    #     macro = Macro(
-    #         contract_id=contract.contract_id,
-    #         macro=None,
-    #         shifted_macro=None,
-    #         df=b"",
-    #         error=None,
-    #     )
-    #     return macro
 
     error = Error(contract_id=contract.contract_id)
     macro_bytes, shifted_macro_bytes, df_bytes, err_trc = None, None, None, None
@@ -621,8 +574,6 @@ def process_macros(db: DatabaseManager) -> None:
     err_count = 0
     with tqdm(total=len(contracts)) as pbar:
         for contract in contracts:
-            # if contract.contract_id != "9ebeb095-ad93-4e5b-896f-674efcd60084":
-            #     continue
             macro = process_macro(contract)
             macro.error.save(db)
             macro.save(db)
@@ -631,14 +582,3 @@ def process_macros(db: DatabaseManager) -> None:
 
             pbar.desc = f"{macro.contract_id} - {err_count} errors"
             pbar.update(1)
-
-    # err_count = 0
-    # with Pool(processes=os.cpu_count()) as pool, tqdm(total=len(contracts)) as pbar:
-    #     pool = cast(_Pool, pool)
-    #     for macro in pool.imap(process_macro, contracts):
-    #         macro.save(db)
-    #         if macro.error:
-    #             err_count += 1
-    #
-    #         pbar.desc = f"{macro.contract_id} - {err_count} errors"
-    #         pbar.update(1)
