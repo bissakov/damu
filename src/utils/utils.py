@@ -2,10 +2,9 @@ import io
 import logging
 import re
 import zipfile
-import zlib
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Union
+from typing import Any, BinaryIO, Callable, Dict, Union
 
 import pandas as pd
 import psutil
@@ -21,17 +20,6 @@ def kill_all_processes(proc_name: str) -> None:
                 proc.terminate()
         except (psutil.AccessDenied, psutil.NoSuchProcess):
             continue
-
-
-def select_one(root: Union[BeautifulSoup, Tag], selector: str) -> Tag:
-    match = root.select(selector)
-    if not match:
-        warning_msg = f"{selector=} was not found..."
-        logging.warning(warning_msg)
-        raise HTMLElementNotFound(warning_msg)
-
-    result = match[0]
-    return result
 
 
 def normalize_value(value: str):
@@ -82,14 +70,6 @@ def safe_extract(archive_path: Path, documents_folder: Path) -> None:
                 raise err
 
 
-def normalize_text(text: str) -> str:
-    new_text = text.lower().strip().split("/")[0]
-    new_text = new_text.replace("i", "і")
-    new_text = re.sub(r"\s{2,}", " ", new_text)
-    new_text = re.sub(r"[^\w\s/№]", "", new_text)
-    return new_text
-
-
 def compare(df1: pd.DataFrame, df2: pd.DataFrame) -> bool:
     if (df1.empty and df2.empty) or (df1.empty and not df2.empty) or (df2.empty and not df1.empty):
         return True
@@ -108,7 +88,7 @@ def save_to_bytes(write_func: Callable[[BinaryIO], Any], compress: bool = True) 
         write_func(buffer_io)
         data = buffer_io.getvalue()
 
-    return zlib.compress(data) if compress else data
+    return data
 
 
 def days360(
@@ -131,3 +111,23 @@ def days360(
             d2 = 30
 
     return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1)
+
+
+def get_column_mapping() -> Dict[str, str]:
+    return {
+        "debt_repayment_date": "Дата погашения основного долга",
+        "principal_debt_balance": "Сумма остатка основного долга",
+        "principal_debt_repayment_amount": "Сумма погашения основного долга",
+        "agency_fee_amount": "Сумма вознаграждения, оплачиваемая финансовым агентством",
+        "recipient_fee_amount": "Сумма вознаграждения, оплачиваемая Получателем",
+        "total_accrued_fee_amount": "Итого сумма начисленного вознаграждения",
+        "day_count": "Кол-во дней",
+        "rate": "Ставка вознаграждения",
+        "day_year_count": "Кол-во дней в году",
+        "subsidy_sum": "Сумма рассчитанной субсидии",
+        "bank_excel_diff": "Разница между расчетом Банка и Excel",
+        "check_total": 'Проверка корректности столбца "Итого начисленного вознаграждения"',
+        "ratio": "Соотношение суммы субсидий на итоговую сумму начисленного вознаграждения",
+        "difference2": "Разница между субсидируемой и несубсидируемой частями",
+        "principal_balance_check": "Проверка корректности остатка основного долга после произведенного погашения",
+    }
