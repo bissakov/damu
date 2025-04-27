@@ -12,6 +12,8 @@ unused/
 temp/
 backup
 
+resources/*.xlsx
+
 *.zip
 .env
 *.db

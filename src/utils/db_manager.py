@@ -57,14 +57,6 @@ class DatabaseManager:
         self.execute("PRAGMA journal_mode=WAL")
 
         self.execute("""
-            CREATE TABLE IF NOT EXISTS banks (
-                bank_id TEXT NOT NULL PRIMARY KEY,
-                bank TEXT,
-                year_count INTEGER
-            )
-        """)
-
-        self.execute("""
             CREATE TABLE IF NOT EXISTS contracts (
                 id TEXT NOT NULL UNIQUE PRIMARY KEY,
                 modified TEXT DEFAULT (datetime('now','localtime')),
@@ -76,6 +68,7 @@ class DatabaseManager:
                 protocol_id TEXT,
                 protocol_date TEXT,
                 decision_date TEXT,
+                settlement_date INTEGER,
                 start_date TEXT,
                 end_date TEXT,
                 loan_amount REAL,
@@ -95,7 +88,8 @@ class DatabaseManager:
                 customer TEXT,
                 customer_id TEXT,
                 bank_id TEXT,
-                FOREIGN KEY (bank_id) REFERENCES banks (bank_id)
+                bank TEXT,
+                year_count INTEGER
             )
         """)
 

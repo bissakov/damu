@@ -1,7 +1,5 @@
 import io
 import json
-import logging
-import os
 import zlib
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import date, datetime
@@ -156,12 +154,23 @@ class Error:
         }
 
     def save(self, db: DatabaseManager) -> None:
-        query = """
-            INSERT OR REPLACE INTO errors
-            (id, traceback, human_readable)
-            VALUES
-            (:id, :traceback, :human_readable)
-        """
+        error_exists = db.execute("SELECT id FROM errors WHERE id = ? LIMIT 1", (self.contract_id,))
+        if not error_exists:
+            query = """
+                INSERT OR REPLACE INTO errors
+                (id, traceback, human_readable)
+                VALUES
+                (:id, :traceback, :human_readable)
+            """
+        else:
+            query = """
+                UPDATE errors
+                SET id = :id,
+                    traceback = :traceback,
+                    human_readable = :human_readable
+                WHERE id = :id
+            """
+
         db.execute(query, self.to_json())
 
     def get_human_readable(self) -> Optional[str]:
@@ -171,44 +180,44 @@ class Error:
 
         if "ContractsNofFoundError" in trc:
             human_readable = (
-                "Не найден договор субсидирования (файл .docx) в списке вложенных файлов"
+                "Не найден договор субсидирования (файл .docx) в списке вложенных файлов."
             )
         elif "DateNotFoundError" in trc:
             human_readable = (
-                "Не удалсь найти либо не удалось обработать дату начала или завершения ДС"
+                "Не удалсь найти либо не удалось обработать дату начала или завершения ДС."
             )
         elif "InvalidColumnCount" in trc or "TableNotFound" in trc:
             human_readable = (
                 "Таблица погашения нестандартного вида, не удалось обработать таблицу. "
                 "Возможные причины - смещеннные строки/колонки, "
-                "неравназначное кол-во именных колонок и колонок данных"
+                "неравназначное кол-во именных колонок и колонок данных."
             )
         elif "MismatchError" in trc:
-            human_readable = "Расхождения между строчными и итоговыми данными в таблице погашения"
+            human_readable = "Расхождения между строчными и итоговыми данными в таблице погашения."
         elif "ExcesssiveTableCountError" in trc:
-            human_readable = "Найдено неверное кол-во таблиц погашений - меньше 1, но больше 2"
+            human_readable = "Найдено неверное кол-во таблиц погашений - меньше 1, но больше 2."
         elif "DataFrameInequalityError" in trc:
-            human_readable = "Казахские и русские версии таблиц погашений не равны друг другу"
+            human_readable = "Казахские и русские версии таблиц погашений не равны друг другу."
         elif "BankNotSupportedError" in trc or "Договор Исламского банка" in trc:
-            human_readable = "Данный банк не поддерживается на данный момент"
+            human_readable = "Данный банк не поддерживается на данный момент."
         elif "Protocol IDs not found" in trc:
-            human_readable = "Номера протоколов не найдены в договоре субсидирования"
+            human_readable = "Номера протоколов не найдены в договоре субсидирования."
         elif "IBANs not found" in trc:
-            human_readable = "IBAN коды не найдены в договоре субсидирования"
+            human_readable = "IBAN коды не найдены в договоре субсидирования."
         elif "IBANs are different" in trc:
             human_readable = (
-                "Расхождения между IBAN кодами в казахской и русской версиях графика погашения"
+                "Расхождения между IBAN кодами в казахской и русской версиях графика погашения."
             )
         elif "CRMNotFoundError" in trc:
-            human_readable = "Не удалось найти проект по протоколу в CRM"
+            human_readable = "Не удалось найти проект по протоколу в CRM."
         elif "VypiskaDownloadError" in trc:
-            human_readable = "Не удалось скачать выписку из CRM"
+            human_readable = "Не удалось скачать выписку из CRM."
         elif "TypeError" in trc and "vypiska_date" in trc:
-            human_readable = "Не удалось получить дату протокола из CRM"
+            human_readable = "Не удалось получить дату протокола из CRM."
         elif "ValueError" in trc and "repayment_procedure=None" in trc:
-            human_readable = "Не удалось получить порядок погашения из CRM"
+            human_readable = "Не удалось получить порядок погашения из CRM."
         else:
-            human_readable = "Неизвестная ошибка"
+            human_readable = "Неизвестная ошибка."
 
         return human_readable
 
@@ -231,12 +240,27 @@ class EdoContract:
         }
 
     def save(self, db: DatabaseManager) -> None:
-        query = """
-            INSERT OR REPLACE INTO contracts
-            (id, ds_id, ds_date, contragent, sed_number)
-            VALUES
-            (:id, :ds_id, :ds_date, :contragent, :sed_number)
-        """
+        contract_exists = db.execute(
+            "SELECT id FROM contracts WHERE id = ? LIMIT 1", (self.contract_id,)
+        )
+        if not contract_exists:
+            query = """
+                INSERT OR REPLACE INTO contracts
+                (id, ds_id, ds_date, contragent, sed_number)
+                VALUES
+                (:id, :ds_id, :ds_date, :contragent, :sed_number)
+            """
+        else:
+            query = """
+                UPDATE contracts
+                SET id = :id,
+                    ds_id = :ds_id,
+                    ds_date = :ds_date,
+                    contragent = :contragent,
+                    sed_number = :sed_number
+                WHERE id = :id
+            """
+
         db.execute(query, self.to_json())
 
 
@@ -252,6 +276,7 @@ class ParseContract:
     dbz_id: Optional[str] = None
     dbz_date: Optional[date] = None
     file_name: Optional[str] = None
+    settlement_date: Optional[int] = None
     error: Optional[Error] = None
 
     def __hash__(self) -> int:
@@ -276,6 +301,7 @@ class ParseContract:
             "dbz_id": self.dbz_id,
             "dbz_date": date_to_str(self.dbz_date),
             "file_name": self.file_name,
+            "settlement_date": self.settlement_date,
         }
 
     def save(self, db: DatabaseManager) -> None:
@@ -290,6 +316,7 @@ class ParseContract:
                 dbz_id = :dbz_id,
                 dbz_date = :dbz_date,
                 file_name = :file_name,
+                settlement_date = :settlement_date,
                 modified = CURRENT_TIMESTAMP
             WHERE id = :id
         """
@@ -298,6 +325,7 @@ class ParseContract:
 
 @dataclass(slots=True)
 class Bank:
+    contract_id: str
     bank_id: str
     bank: str
     year_count: Optional[int]
@@ -307,6 +335,7 @@ class Bank:
 
     def to_json(self) -> Dict[str, Union[str, float, None]]:
         return {
+            "id": self.contract_id,
             "bank_id": self.bank_id,
             "bank": self.bank,
             "year_count": self.year_count,
@@ -314,8 +343,11 @@ class Bank:
 
     def save(self, db: DatabaseManager) -> None:
         query = """
-            INSERT OR REPLACE INTO banks (bank_id, bank, year_count)
-            VALUES (:bank_id, :bank, :year_count)
+            UPDATE contracts
+            SET bank_id = :bank_id,
+                bank = :bank,
+                year_count = :year_count
+            WHERE id = :id
         """
         db.execute(query, self.to_json())
 
