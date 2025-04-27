@@ -2,17 +2,18 @@ import json
 import logging
 import re
 import traceback
-from contextlib import suppress
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from time import sleep
-from typing import Any, Dict, Optional, Tuple
+from types import TracebackType
+from typing import Any, Dict, Optional, Tuple, Type, override
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from src.error import CRMNotFoundError, LoginError, VypiskaDownloadError, retry
+from src.structures import Registry
 from src.subsidy import Bank, CrmContract, Error, InterestRate
 from src.utils.db_manager import DatabaseManager
 from src.utils.request_handler import RequestHandler
@@ -307,205 +308,224 @@ class CRM(RequestHandler):
 
         return vypiska_row
 
+    @override
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        self.is_logged_in = False
+        super().__exit__(exc_type, exc_val, exc_tb)
 
-def fetch_crm_data(crm: CRM, db: DatabaseManager, resources_folder: Path) -> None:
-    with (resources_folder / "mappings.json").open("r", encoding="utf-8") as f:
-        mappings: Dict[str, Dict[str, str]] = json.load(f)
 
-    with (resources_folder / "banks.json").open("r", encoding="utf-8") as f:
-        banks = json.load(f)
+def fetch_crm_data_one(
+    crm: CRM,
+    contract_id: str,
+    protocol_id: str,
+    start_date: str,
+    end_date: str,
+    db: DatabaseManager,
+    registry: Registry,
+) -> CrmContract:
+    contract = CrmContract(contract_id=contract_id, error=Error(contract_id=contract_id))
 
+    status, row = crm.find_project(protocol_id=protocol_id)
+    if not status:
+        try:
+            raise CRMNotFoundError(f"Protocol {protocol_id} not found...")
+        except CRMNotFoundError as err:
+            logging.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
+            contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+            contract.error.human_readable = contract.error.get_human_readable()
+        contract.error.save(db)
+        contract.save(db)
+        return contract
+    logging.info(f"CRM - SUCCESS - {protocol_id=}")
+
+    contract.project_id = row.get("Id")
+    contract.project = row.get("Project", {}).get("displayValue")
+    contract.customer = row.get("Customer", {}).get("displayValue")
+    contract.customer_id = row.get("Customer", {}).get("value")
+    contract.bank_id = row.get("BvuLk", {}).get("value")
+
+    bank = Bank(
+        contract_id=contract_id,
+        bank_id=contract.bank_id,
+        bank=row.get("BvuLk", {}).get("displayValue"),
+        year_count=registry.banks.get(contract.bank_id),
+    )
+    bank.save(db)
+
+    status, project = crm.get_project_data(contract.project_id)
+    if not status:
+        try:
+            raise CRMNotFoundError(
+                f"Project {contract.project_id} of protocol {protocol_id} not found..."
+            )
+        except CRMNotFoundError as err:
+            logging.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
+            contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+            contract.error.human_readable = contract.error.get_human_readable()
+        contract.error.save(db)
+        contract.save(db)
+        return contract
+    logging.info(f"CRM - SUCCESS - {contract.project_id=}")
+
+    contract.subsid_amount = project.get("ProjectSubsidAmount") or 0.0
+    contract.investment_amount = project.get("ForInvestment") or 0.0
+    contract.pos_amount = project.get("ForPOS") or 0.0
+    contract.credit_purpose = registry.mappings.get("credit_purpose", {}).get(
+        project.get("CreditingPurpose", {}).get("displayValue")
+    )
+    contract.request_number = project.get("RequestNumber")
+    contract.protocol_date = datetime.strptime(
+        project.get("DateScoring"), "%Y-%m-%dT%H:%M:%S.%f"
+    ).date()
+    contract.repayment_procedure = registry.mappings.get("repayment_procedure", {}).get(
+        project.get("RepaymentOrderMainLoan", {}).get("displayValue")
+    )
+    contract.decision_date = datetime.strptime(
+        project.get("BvuLkDate"), "%Y-%m-%dT%H:%M:%S.%f"
+    ).date()
+
+    agreement_data = crm.fetch_agreement_data(contract)
+    if agreement_data:
+        contract.dbz_id = (agreement_data.get("NumberDBZ") or "").strip() or None
+        contract.dbz_date = pd.to_datetime(agreement_data.get("DateDBZ"))
+
+    interest_rate = InterestRate(
+        contract_id=contract_id,
+        subsid_term=project.get("SubsidTerm"),
+        nominal_rate=project.get("NominalInterestRate"),
+        rate_one_two_three_year=project.get("SubsidInterestRate"),
+        rate_four_year=project.get("INFSubsidInterestRateFourYear"),
+        rate_five_year=project.get("INFSubsidInterestRateFiveYear"),
+        rate_six_seven_year=project.get("INFSubsidInterestRateSixSevenYear"),
+        rate_fee_one_two_three_year=project.get("INFSubsidInterestRateFee"),
+        rate_fee_four_year=project.get("INFSubsidInterestRateFeeFourYear"),
+        rate_fee_five_year=project.get("INFSubsidInterestRateFeeFiveYear"),
+        rate_fee_six_seven_year=project.get("INFSubsidInterestRateFeeSixSevenYear"),
+    )
+
+    start_date1 = pd.to_datetime(start_date)
+
+    if interest_rate.rate_four_year != 0:
+        start_date2 = start_date1 + relativedelta(years=3)
+        end_date1 = start_date2 - timedelta(days=1)
+
+        if interest_rate.rate_five_year != 0:
+            start_date3 = start_date2 + relativedelta(years=1)
+            end_date2 = start_date3 - timedelta(days=1)
+
+            if interest_rate.rate_six_seven_year != 0:
+                start_date4 = start_date3 + relativedelta(years=1)
+                end_date3 = start_date4 - timedelta(days=1)
+                end_date4 = pd.to_datetime(end_date)
+            else:
+                start_date4 = None
+                end_date3 = pd.to_datetime(end_date)
+                end_date4 = None
+        else:
+            start_date3 = None
+            end_date2 = pd.to_datetime(end_date)
+            end_date3 = None
+            start_date4 = None
+            end_date4 = None
+    else:
+        start_date2 = None
+        end_date1 = pd.to_datetime(end_date)
+        start_date3 = None
+        end_date2 = None
+        start_date4 = None
+        end_date3 = None
+        end_date4 = None
+
+    interest_rate.start_date_one_two_three_year = start_date1
+    interest_rate.end_date_one_two_three_year = end_date1
+    interest_rate.start_date_four_year = start_date2
+    interest_rate.end_date_four_year = end_date2
+    interest_rate.start_date_five_year = start_date3
+    interest_rate.end_date_five_year = end_date3
+    interest_rate.start_date_six_seven_year = start_date4
+    interest_rate.end_date_six_seven_year = end_date4
+    interest_rate.save(db)
+
+    vypiska_row = crm.download_vypiskas(crm_contract=contract)
+    if not vypiska_row:
+        try:
+            raise VypiskaDownloadError(f"Vypiska of protocol {protocol_id} was not downloaded...")
+        except VypiskaDownloadError as err:
+            logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
+            contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+            contract.error.human_readable = contract.error.get_human_readable()
+        contract.error.save(db)
+        contract.save(db)
+        return contract
+
+    try:
+        contract.vypiska_date = datetime.fromisoformat(vypiska_row.get("Date")).date()
+    except TypeError as err:
+        logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
+        contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+        contract.error.human_readable = contract.error.get_human_readable()
+        contract.error.save(db)
+        contract.save(db)
+        return contract
+
+    if not contract.repayment_procedure:
+        repayment_procedure = vypiska_row.get("Note")
+        if not isinstance(repayment_procedure, str):
+            try:
+                raise ValueError(f"{repayment_procedure=} is not str. {vypiska_row=}")
+            except ValueError as err:
+                logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
+                contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+                contract.error.human_readable = contract.error.get_human_readable()
+            contract.error.save(db)
+            contract.save(db)
+            return contract
+
+        repayment_procedure = re.sub(r"[^\w\s]", "", repayment_procedure.lower())
+        repayment_procedure = re.sub(r"\s{2,}", " ", repayment_procedure)
+
+        contract.repayment_procedure = next(
+            (
+                value
+                for key, value in registry.mappings.get("repayment_procedure" or {}).items()
+                if key in repayment_procedure
+            ),
+            None,
+        )
+        if not contract.repayment_procedure:
+            try:
+                raise ValueError(f"{contract.repayment_procedure=} is still None. {vypiska_row=}")
+            except ValueError as err:
+                logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
+                contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
+                contract.error.human_readable = contract.error.get_human_readable()
+            contract.error.save(db)
+            contract.save(db)
+            return contract
+
+    contract.save(db)
+
+    sleep(0.05)
+
+    return contract
+
+
+def fetch_crm_data(crm: CRM, db: DatabaseManager, registry: Registry) -> None:
     contracts = db.execute(
         """
-            SELECT id, protocol_id, start_date, end_date
-            FROM contracts
+            SELECT c.id, c.protocol_id, c.start_date, c.end_date
+            FROM contracts AS c
+            LEFT JOIN errors AS e ON c.id = e.id
+            WHERE e.traceback IS NULL
         """,
     )
 
     count = len(contracts)
     for idx, (contract_id, protocol_id, start_date, end_date) in enumerate(contracts, start=1):
         logging.info(f"CRM - {idx:02}/{count} - {contract_id}")
-
-        contract = CrmContract(contract_id=contract_id, error=Error(contract_id=contract_id))
-
-        status, row = crm.find_project(protocol_id=protocol_id)
-        if not status:
-            try:
-                raise CRMNotFoundError(f"Protocol {protocol_id} not found...")
-            except CRMNotFoundError as err:
-                logging.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
-                contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
-            contract.error.save(db)
-            contract.save(db)
-            continue
-        logging.info(f"CRM - SUCCESS - {protocol_id=}")
-
-        contract.project_id = row.get("Id")
-        contract.project = row.get("Project", {}).get("displayValue")
-        contract.customer = row.get("Customer", {}).get("displayValue")
-        contract.customer_id = row.get("Customer", {}).get("value")
-        contract.bank_id = row.get("BvuLk", {}).get("value")
-
-        bank = Bank(
-            bank_id=contract.bank_id,
-            bank=row.get("BvuLk", {}).get("displayValue"),
-            year_count=banks.get(contract.bank_id),
-        )
-        bank.save(db)
-
-        status, project = crm.get_project_data(contract.project_id)
-        if not status:
-            try:
-                raise CRMNotFoundError(
-                    f"Project {contract.project_id} of protocol {protocol_id} not found..."
-                )
-            except CRMNotFoundError as err:
-                logging.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
-                contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
-            contract.error.save(db)
-            contract.save(db)
-            continue
-        logging.info(f"CRM - SUCCESS - {contract.project_id=}")
-
-        contract.subsid_amount = project.get("ProjectSubsidAmount") or 0.0
-        contract.investment_amount = project.get("ForInvestment") or 0.0
-        contract.pos_amount = project.get("ForPOS") or 0.0
-        contract.credit_purpose = mappings.get("credit_purpose", {}).get(
-            project.get("CreditingPurpose", {}).get("displayValue")
-        )
-        contract.request_number = project.get("RequestNumber")
-        contract.protocol_date = datetime.strptime(
-            project.get("DateScoring"), "%Y-%m-%dT%H:%M:%S.%f"
-        ).date()
-        contract.repayment_procedure = mappings.get("repayment_procedure", {}).get(
-            project.get("RepaymentOrderMainLoan", {}).get("displayValue")
-        )
-        contract.decision_date = datetime.strptime(
-            project.get("BvuLkDate"), "%Y-%m-%dT%H:%M:%S.%f"
-        ).date()
-
-        agreement_data = crm.fetch_agreement_data(contract)
-        if agreement_data:
-            contract.dbz_id = (agreement_data.get("NumberDBZ") or "").strip() or None
-            contract.dbz_date = pd.to_datetime(agreement_data.get("DateDBZ"))
-
-        interest_rate = InterestRate(
-            contract_id=contract_id,
-            subsid_term=project.get("SubsidTerm"),
-            nominal_rate=project.get("NominalInterestRate"),
-            rate_one_two_three_year=project.get("SubsidInterestRate"),
-            rate_four_year=project.get("INFSubsidInterestRateFourYear"),
-            rate_five_year=project.get("INFSubsidInterestRateFiveYear"),
-            rate_six_seven_year=project.get("INFSubsidInterestRateSixSevenYear"),
-            rate_fee_one_two_three_year=project.get("INFSubsidInterestRateFee"),
-            rate_fee_four_year=project.get("INFSubsidInterestRateFeeFourYear"),
-            rate_fee_five_year=project.get("INFSubsidInterestRateFeeFiveYear"),
-            rate_fee_six_seven_year=project.get("INFSubsidInterestRateFeeSixSevenYear"),
-        )
-
-        start_date1 = pd.to_datetime(start_date)
-
-        if interest_rate.rate_four_year != 0:
-            start_date2 = start_date1 + relativedelta(years=3)
-            end_date1 = start_date2 - timedelta(days=1)
-
-            if interest_rate.rate_five_year != 0:
-                start_date3 = start_date2 + relativedelta(years=1)
-                end_date2 = start_date3 - timedelta(days=1)
-
-                if interest_rate.rate_six_seven_year != 0:
-                    start_date4 = start_date3 + relativedelta(years=1)
-                    end_date3 = start_date4 - timedelta(days=1)
-                    end_date4 = pd.to_datetime(end_date)
-                else:
-                    start_date4 = None
-                    end_date3 = pd.to_datetime(end_date)
-                    end_date4 = None
-            else:
-                start_date3 = None
-                end_date2 = pd.to_datetime(end_date)
-                end_date3 = None
-                start_date4 = None
-                end_date4 = None
-        else:
-            start_date2 = None
-            end_date1 = pd.to_datetime(end_date)
-            start_date3 = None
-            end_date2 = None
-            start_date4 = None
-            end_date3 = None
-            end_date4 = None
-
-        interest_rate.start_date_one_two_three_year = start_date1
-        interest_rate.end_date_one_two_three_year = end_date1
-        interest_rate.start_date_four_year = start_date2
-        interest_rate.end_date_four_year = end_date2
-        interest_rate.start_date_five_year = start_date3
-        interest_rate.end_date_five_year = end_date3
-        interest_rate.start_date_six_seven_year = start_date4
-        interest_rate.end_date_six_seven_year = end_date4
-        interest_rate.save(db)
-
-        vypiska_row = crm.download_vypiskas(crm_contract=contract)
-        if not vypiska_row:
-            try:
-                raise VypiskaDownloadError(
-                    f"Vypiska of protocol {protocol_id} was not downloaded..."
-                )
-            except VypiskaDownloadError as err:
-                logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
-                contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
-            contract.error.save(db)
-            contract.save(db)
-            continue
-
-        try:
-            contract.vypiska_date = datetime.fromisoformat(vypiska_row.get("Date")).date()
-        except TypeError as err:
-            logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
-            contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
-            contract.error.human_readable = contract.error.get_human_readable()
-            contract.error.save(db)
-            contract.save(db)
-            continue
-
-        if not contract.repayment_procedure:
-            repayment_procedure = vypiska_row.get("Note")
-            if not isinstance(repayment_procedure, str):
-                try:
-                    raise ValueError(f"{repayment_procedure=} is not str. {vypiska_row=}")
-                except ValueError as err:
-                    logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
-                    contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
-                    contract.error.human_readable = contract.error.get_human_readable()
-                contract.error.save(db)
-                contract.save(db)
-                continue
-
-            repayment_procedure = re.sub(r"[^\w\s]", "", repayment_procedure.lower())
-            repayment_procedure = re.sub(r"\s{2,}", " ", repayment_procedure)
-
-            contract.repayment_procedure = next(
-                (
-                    value
-                    for key, value in mappings.get("repayment_procedure" or {}).items()
-                    if key in repayment_procedure
-                ),
-                None,
-            )
-            if not contract.repayment_procedure:
-                try:
-                    raise ValueError(
-                        f"{contract.repayment_procedure=} is still None. {vypiska_row=}"
-                    )
-                except ValueError as err:
-                    logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
-                    contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
-                    contract.error.human_readable = contract.error.get_human_readable()
-                contract.error.save(db)
-                contract.save(db)
-                continue
-
-        contract.save(db)
-
-        sleep(0.05)
+        fetch_crm_data_one(crm, contract_id, protocol_id, start_date, end_date, db, registry)

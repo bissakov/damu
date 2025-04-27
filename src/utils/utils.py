@@ -7,19 +7,6 @@ from pathlib import Path
 from typing import Any, BinaryIO, Callable, Dict, Union
 
 import pandas as pd
-import psutil
-from bs4 import BeautifulSoup, Tag
-
-from src.error import HTMLElementNotFound
-
-
-def kill_all_processes(proc_name: str) -> None:
-    for proc in psutil.process_iter():
-        try:
-            if proc_name in proc.name():
-                proc.terminate()
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            continue
 
 
 def normalize_value(value: str):
@@ -83,7 +70,7 @@ def compare(df1: pd.DataFrame, df2: pd.DataFrame) -> bool:
     )
 
 
-def save_to_bytes(write_func: Callable[[BinaryIO], Any], compress: bool = True) -> bytes:
+def save_to_bytes(write_func: Callable[[BinaryIO], Any]) -> bytes:
     with io.BytesIO() as buffer_io:
         write_func(buffer_io)
         data = buffer_io.getvalue()

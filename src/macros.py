@@ -499,11 +499,45 @@ def validate_macro(df_bytes: bytes) -> None:
         )
 
 
-def process_macro(contract: SubsidyContract) -> Macro:
+def process_macro(contract_id: str, db: DatabaseManager) -> Macro:
     if multiprocessing.current_process().name != "MainProcess":
         logging.disable(logging.CRITICAL)
 
-    error = Error(contract_id=contract.contract_id)
+    data = db.execute(
+        """
+            SELECT c.id,
+                   c.start_date,
+                   c.end_date,
+                   c.loan_amount,
+                   c.df,
+                   c.bank,
+                   c.year_count,
+                   ir.rate_one_two_three_year,
+                   ir.rate_four_year,
+                   ir.rate_five_year,
+                   ir.rate_six_seven_year,
+                   ir.start_date_one_two_three_year,
+                   ir.end_date_one_two_three_year,
+                   ir.start_date_four_year,
+                   ir.end_date_four_year,
+                   ir.start_date_five_year,
+                   ir.end_date_five_year,
+                   ir.start_date_six_seven_year,
+                   ir.end_date_six_seven_year
+            FROM contracts AS c
+            INNER JOIN interest_rates AS ir ON ir.id = c.id
+            LEFT JOIN errors AS e ON e.id = c.id
+            WHERE
+                e.traceback IS NULL AND
+                c.id = ?
+            """,
+        (contract_id,),
+    )
+    data = data[0]
+
+    contract = SubsidyContract(*data)
+
+    error = Error(contract_id=contract_id)
     macro_bytes, shifted_macro_bytes, df_bytes, err_trc = None, None, None, None
     try:
         if contract.bank not in {
@@ -550,8 +584,8 @@ def process_macros(db: DatabaseManager) -> None:
                    c.end_date,
                    c.loan_amount,
                    c.df,
-                   b.bank,
-                   b.year_count,
+                   c.bank,
+                   c.year_count,
                    ir.rate_one_two_three_year,
                    ir.rate_four_year,
                    ir.rate_five_year,
@@ -565,8 +599,9 @@ def process_macros(db: DatabaseManager) -> None:
                    ir.start_date_six_seven_year,
                    ir.end_date_six_seven_year
             FROM contracts AS c
-            LEFT JOIN banks AS b ON b.bank_id = c.bank_id
-            INNER JOIN interest_rates as ir ON ir.id = c.id
+            INNER JOIN interest_rates AS ir ON ir.id = c.id
+            LEFT JOIN errors AS e ON e.id = c.id
+            WHERE e.traceback IS NULL
             """
         )
     ]

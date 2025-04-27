@@ -5,12 +5,10 @@ import os
 import re
 import traceback
 from contextlib import suppress
-from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
-from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -20,7 +18,6 @@ from docx.table import Table
 from docx2python import docx2python
 from docx2python.docx_output import DocxContent
 from pandas._libs import OutOfBoundsDatetime
-from tqdm import tqdm
 
 from src.error import (
     ContractsNofFoundError,
@@ -31,56 +28,12 @@ from src.error import (
     MismatchError,
     TableNotFound,
 )
+from src.structures import RegexPatterns
 from src.subsidy import Error, ParseContract
 from src.utils.collections import find, index
 from src.utils.db_manager import DatabaseManager
-from src.utils.office import FileFormat, Office, OfficeType
+from src.utils.office import Office
 from src.utils.utils import compare, get_column_mapping
-
-
-@dataclass
-class RegexPatterns:
-    months: Dict[str, str]
-    file_name: re.Pattern = re.compile(
-        r"((дог\w*.?.суб\w*.?)|(дс))",
-        re.IGNORECASE,
-    )
-    file_contents: re.Pattern = re.compile(
-        r"((бір бөлігін субсидиялау туралы)|(договор субсидирования)|(субсидиялаудың шарты))",
-        re.IGNORECASE,
-    )
-    wrong_contents: re.Pattern = re.compile(r"дополнительное соглашение", re.IGNORECASE)
-    protocol_id: re.Pattern = re.compile(r"№?.?(\d{6})")
-    iban: re.Pattern = re.compile(r"коды?:?.+?(KZ[0-9A-Z]{18})", re.IGNORECASE)
-    primary_column: re.Pattern = re.compile(
-        r"((дата *погашени\w+ *основно\w+ *долга)|(негізгі *борышты *өтеу))",
-        re.IGNORECASE,
-    )
-    secondary_column: re.Pattern = re.compile(
-        r"((сумма *остатка *основного *долга)|(негізгі *борыш\w* *қалды\w* *сомасы))",
-        re.IGNORECASE,
-    )
-    alpha_letters: re.Pattern = re.compile(r"[а-яәғқңөұүһі]", re.IGNORECASE)
-    kz_letters: re.Pattern = re.compile(r"[әғқңөұүһі]", re.IGNORECASE)
-    float_number_full: re.Pattern = re.compile(r"^[\d ., ]+$")
-    float_number: re.Pattern = re.compile(r"([\d ., ]+)")
-    number: re.Pattern = re.compile(r"(\d+)")
-    start_date: re.Pattern = re.compile(r"^9\.")
-    end_dates: List[re.Pattern] = field(
-        default_factory=lambda: [
-            re.compile(r"^18\."),
-            re.compile(r"^30\."),
-            re.compile(r"^19\."),
-        ]
-    )
-    complex_date: re.Pattern = re.compile(r"(((\d{2,}) +(\w+) +(\w+) +(\w+))|(\d+.\d+.\d+))")
-    whitespace: re.Pattern = re.compile(r"\s+")
-    date_separator: re.Pattern = re.compile(r"[. /-]")
-    interest_dates: re.Pattern = re.compile(r"«?(\d{2,})»? (\w+) «?(\d+)»? (\w+)")
-    date: re.Pattern = re.compile(r"(\d+\.\d+\.\d+)")
-    interest_rates1: re.Pattern = re.compile(r"([\d,.]+) ?%? ?\(")
-    interest_rates2: re.Pattern = re.compile(r"([\d,.]+) ?%? ?\w")
-    interest_rate_para: re.Pattern = re.compile(r"6\.(.+?)7\. ", re.DOTALL)
 
 
 class Backend(Enum):
@@ -140,8 +93,8 @@ class SubsidyDocument:
         copy_file_path = file_path.parent / f"copy_{file_path.name}"
 
         try:
-            with Office(file_path=og_file_path, office_type=OfficeType.WordType) as word:
-                word.save_as(copy_file_path, FileFormat.DOCX)
+            with Office(file_path=og_file_path, office_type=Office.Type.WordType) as word:
+                word.save_as(copy_file_path, Office.Format.DOCX)
         except (Exception, BaseException) as err:
             og_file_path.unlink()
             copy_file_path.rename(file_path)
@@ -695,7 +648,7 @@ def parse_document(
     download_folder: Path,
     patterns: RegexPatterns,
     db: DatabaseManager,
-) -> None:
+) -> ParseContract:
     os.chdir(os.getenv("project_folder"))
 
     if multiprocessing.current_process().name != "MainProcess":
@@ -715,7 +668,7 @@ def parse_document(
         contract.error.human_readable = contract.error.get_human_readable()
         contract.error.save(db)
         contract.save(db)
-        return
+        return contract
 
     document_count = len(documents)
 
@@ -738,7 +691,7 @@ def parse_document(
                 contract.error.human_readable = contract.error.get_human_readable()
                 contract.error.save(db)
                 contract.save(db)
-                return
+                return contract
         try:
             if len(dfs) == 2 and not compare(dfs[0], dfs[1]):
                 raise DataFrameInequalityError("DataFrames not equal to each other")
@@ -748,7 +701,7 @@ def parse_document(
             contract.error.human_readable = contract.error.get_human_readable()
             contract.error.save(db)
             contract.save(db)
-            return
+            return contract
 
         if len(dfs):
             contract.df = dfs[0]
@@ -760,8 +713,15 @@ def parse_document(
             contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
             contract.error.human_readable = contract.error.get_human_readable()
 
-    contract.error.save(db)
+    if contract.df is not None:
+        contract.settlement_date = int(
+            contract.df["debt_repayment_date"].dt.day.value_counts().idxmax()
+        )
+
     contract.save(db)
+    contract.error.save(db)
+
+    return contract
 
 
 def parse_documents(db: DatabaseManager, months_json_path: Path, download_folder: Path) -> None:

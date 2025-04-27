@@ -1,20 +1,25 @@
+import asyncio
 import dataclasses
 import logging
+import math
 import random
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from types import TracebackType
-from typing import List, Optional, Tuple, Type, override
+from typing import List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
+import aiofiles
+import pandas as pd
 from bs4 import BeautifulSoup, SoupStrainer
 
-from src.error import LoginError, retry
+from src.error import LoginError, async_retry
 from src.subsidy import EdoContract
+from src.utils.collections import batched
 from src.utils.db_manager import DatabaseManager
-from src.utils.request_handler import RequestHandler
+from src.utils.request_handler import AsyncRequestHandler
+from src.utils.utils import safe_extract
 
 
 @dataclasses.dataclass
@@ -32,10 +37,12 @@ class EdoNotification:
 class EdoBasicContract:
     contract_id: str
     contract_type: str
+    contract_type2: str
+    contract_amount: str
     contract_subject: str
 
 
-class EDO(RequestHandler):
+class EDO(AsyncRequestHandler):
     def __init__(
         self,
         user: str,
@@ -62,8 +69,8 @@ class EDO(RequestHandler):
 
         self.is_logged_in = False
 
-    @retry(exceptions=(LoginError,), tries=5, delay=5, backoff=5)
-    def login(self) -> None:
+    @async_retry(exceptions=(LoginError,), tries=5, delay=5, backoff=5)
+    async def login(self) -> None:
         self.is_logged_in = False
         self.clear_cookies()
 
@@ -98,7 +105,7 @@ class EDO(RequestHandler):
             "browser_token": browser_token,
         }
 
-        response = self.request(
+        response = await self.request(
             method="post",
             path="user/login?back=/",
             data=data,
@@ -119,11 +126,11 @@ class EDO(RequestHandler):
 
         self.is_logged_in = True
 
-    def get_notifications(self) -> List[EdoNotification]:
+    async def get_notifications(self) -> List[EdoNotification]:
         if not self.is_logged_in:
-            self.login()
+            await self.login()
 
-        response = self.request(method="get", path="lms/get-notify-list")
+        response = await self.request(method="get", path="lms/get-notify-list")
         if not response:
             logging.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
@@ -149,11 +156,11 @@ class EDO(RequestHandler):
         ]
         return notifications
 
-    def get_attached_document_url(self, notification: EdoNotification) -> str:
+    async def get_attached_document_url(self, notification: EdoNotification) -> str:
         if not self.is_logged_in:
-            self.login()
+            await self.login()
 
-        response = self.request(
+        response = await self.request(
             method="get",
             path=f"workflow/document/related-document/{notification.doctype_id}/{notification.doc_id}/v_516fba03",
         )
@@ -174,9 +181,9 @@ class EDO(RequestHandler):
         logging.info(f"Document URL - {document_url!r}")
         return document_url
 
-    def reply_to_notification(self, notification: EdoNotification, reply: str) -> bool:
+    async def reply_to_notification(self, notification: EdoNotification, reply: str) -> bool:
         if not self.is_logged_in:
-            self.login()
+            await self.login()
 
         reply = reply.strip()
 
@@ -188,7 +195,7 @@ class EDO(RequestHandler):
             "use_eds": "0",
         }
 
-        response = self.request(
+        response = await self.request(
             method="post",
             path=f"workflow/document/decision/{notification.doctype_id}/{notification.doc_id}/t_51945d1?mydocuments&",
             data=data,
@@ -207,13 +214,13 @@ class EDO(RequestHandler):
         response_msg = response_data.get("message", "").strip()
         return response_msg == "Выполнена задача: Исполнить"
 
-    def mark_as_read(self, notif_id: str) -> bool:
+    async def mark_as_read(self, notif_id: str) -> bool:
         data = {
             "items": notif_id,
             "is_read": "1",
         }
 
-        response = self.request(
+        response = await self.request(
             method="post",
             path=f"lms/mark-as",
             data=data,
@@ -224,9 +231,104 @@ class EDO(RequestHandler):
 
         return True
 
-    def get_filtered_html(self, basic_contract_data: EdoBasicContract) -> str:
+    async def get_contract_list_row_count(self) -> Tuple[bool, int]:
+        headers = self.headers
+        headers.update(
+            {
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Connection": "keep-alive",
+                "Origin": "https://edo.fund.kz",
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+        )
+
+        self.set_cookie("FontSize", "9")
+
+        params = {
+            "qs": "",
+            "flt[1][name]": "f_4135638",
+            "flt[1][type]": "string",
+            "flt[1][condition]": "LIKE",
+            "flt[1][value]": "Договор субсидирования",
+            "g[f_e1a2e56]": "Подписан",
+            "pp": "getTotalRows",
+        }
+
+        response = await self.request(
+            method="post",
+            path="workflow/folder/index/167955b9-2e25-4044-a253-5a0ae83e01e0/f48469f3-1a44-4ddb-ba0f-5a0aea09009c",
+            headers=headers,
+            params=params,
+        )
+
+        if not response:
+            return False, -1
+
+        if not hasattr(response, "json"):
+            logging.error(f"Response does not have JSON. Text instead - {response.text=}")
+            return False, -1
+        data = response.json()
+
+        row_count = data.get("total")
+        if not row_count:
+            logging.error(f"No key 'total' in {response.json()=}")
+            return False, -1
+
+        return True, int(row_count)
+
+    @staticmethod
+    async def parse_table_rows(soup: BeautifulSoup, db: DatabaseManager) -> List[str]:
+        contract_ids = []
+
+        headers = [
+            (idx, text)
+            for idx, el in enumerate(soup.select("tr.title > td"))
+            if (text := el.text.strip())
+        ]
+
+        row_idx = 0
+        while (current_row := soup.select_one(selector=f"tr#grid_row_{row_idx}")) is not None:
+            row = {
+                header: current_row.select_one(
+                    selector=f":nth-child({html_col_idx + 1})"
+                ).text.strip()
+                for html_col_idx, header in headers
+            }
+
+            anchor = current_row.select_one(selector="td.document_extra_info > div > a")
+            href = anchor.get("href")
+            contract_id = href.split("/")[-1]
+
+            contragent = row["Заемщик"]
+            contragent_match = re.search(r"\d{12}", contragent)
+            if not contragent_match:
+                contragent = ""
+            else:
+                contragent = contragent_match.group(0)
+
+            ds_id = row["Рег.№"]
+            ds_id = ds_id.strip().split(" ")[-1].replace("№", "")
+
+            contract = EdoContract(
+                contract_id=contract_id,
+                ds_id=ds_id,
+                contragent=contragent,
+                ds_date=datetime.strptime(row["Рег. дата"], "%d.%m.%Y").date(),
+                sed_number=row["Порядковый номер"],
+            )
+            contract.save(db)
+
+            contract_ids.append(contract_id)
+
+            row_idx += 1
+
+        return contract_ids
+
+    async def get_filtered_html(self, basic_contract_data: EdoBasicContract) -> str:
         if not self.is_logged_in:
-            self.login()
+            await self.login()
 
         headers = self.headers
         headers.update(
@@ -237,9 +339,6 @@ class EDO(RequestHandler):
                 "X-Requested-With": "XMLHttpRequest",
             }
         )
-
-        # contract_subject = basic_contract_data.contract_subject.replace("«", "").replace("»", "")
-        contract_subject = basic_contract_data.contract_subject.strip()
 
         params = {
             "p": "0",  # Страница (индекс с 0)
@@ -252,12 +351,12 @@ class EDO(RequestHandler):
             "flt[3][name]": "f_f111a29",  # Предмет договора == basic_contract_data.contract_subject
             "flt[3][type]": "string",
             "flt[3][condition]": "LIKE",
-            "flt[3][value]": contract_subject,
+            "flt[3][value]": basic_contract_data.contract_subject,
             "pp": "node",
             "_": "1736098323272",
         }
 
-        response = self.request(
+        response = await self.request(
             method="get",
             path="/workflow/folder/index/167955b9-2e25-4044-a253-5a0ae83e01e0/f48469f3-1a44-4ddb-ba0f-5a0aea09009c",
             headers=headers,
@@ -271,11 +370,13 @@ class EDO(RequestHandler):
         contract_list_html = response.text
         return contract_list_html
 
-    def find_contract(self, basic_contract_data: EdoBasicContract, db: DatabaseManager) -> None:
+    async def find_contract(
+        self, basic_contract_data: EdoBasicContract, db: DatabaseManager
+    ) -> None:
         if not self.is_logged_in:
-            self.login()
+            await self.login()
 
-        html = self.get_filtered_html(basic_contract_data)
+        html = await self.get_filtered_html(basic_contract_data)
         soup = BeautifulSoup(html, features="lxml")
 
         headers = [
@@ -283,8 +384,6 @@ class EDO(RequestHandler):
             for idx, el in enumerate(soup.select("tr.title > td"))
             if (text := el.text.strip())
         ]
-
-        contract = None
 
         row_idx = 0
         while (current_row := soup.select_one(selector=f"tr#grid_row_{row_idx}")) is not None:
@@ -321,10 +420,56 @@ class EDO(RequestHandler):
             contract.save(db)
             break
 
-        if not contract:
-            raise Exception(f"Contract not found {basic_contract_data.contract_id}!")
+    async def contracts_page_html(self, page: Union[int, str], ascending: bool) -> Optional[str]:
+        if not self.is_logged_in:
+            await self.login()
 
-    def download_file(self, contract_id: str) -> Tuple[bool, str]:
+        logging.info(f"Page {page + 1}")
+
+        headers = self.headers
+        headers.update(
+            {
+                "accept": "*/*",
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+        )
+
+        ascending_type = "asc" if ascending else "desc"
+        year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d %H:%M")
+        params = {
+            "g[f_e1a2e56]": "Подписан",  # По статусу "Подписан"
+            "p": str(page),  # Страница (индекс с 0)
+            "s[f_01ef77b]": ascending_type,  # Рег. дата в порядке возрастания
+            "qs": "",
+            "flt[1][name]": "f_4135638",  # Тип договора == Договор субсидирования"
+            "flt[1][type]": "string",
+            "flt[1][condition]": "LIKE",
+            "flt[1][value]": "Договор субсидирования",
+            "flt[10][name]": "f_01ef77b",
+            "flt[10][type]": "date",  # Рег. дата за последний год
+            "flt[10][condition]": "MOREEQUAL",
+            "flt[10][value]": year_ago,
+            "pp": "node",
+            "_": "1736098323272",
+        }
+
+        response = await self.request(
+            method="get",
+            path="/workflow/folder/index/167955b9-2e25-4044-a253-5a0ae83e01e0/f48469f3-1a44-4ddb-ba0f-5a0aea09009c",
+            headers=headers,
+            params=params,
+        )
+
+        if not response:
+            logging.warning("Robot is not logged in to the EDO...")
+            raise Exception("Robot is not logged in to the EDO...")
+
+        contract_list_html = response.text
+        return contract_list_html
+
+    async def download_file_async(self, contract_id: str) -> Tuple[bool, str]:
         download_path = (
             f"/media/download-multiple/workflow/beff8bc1-14fd-4657-86f1-55797181018f/{contract_id}"
         )
@@ -337,7 +482,7 @@ class EDO(RequestHandler):
             return True, contract_id
 
         if not self.is_logged_in:
-            self.login()
+            await self.login()
 
         headers = self.headers
         headers.update(
@@ -353,20 +498,115 @@ class EDO(RequestHandler):
             }
         )
 
-        response = self.request(method="get", path=download_path, headers=headers)
+        response = await self.request(method="get", path=download_path, headers=headers)
         if not response:
             return False, contract_id
 
-        with save_location.open("wb") as file:
-            file.write(response.content)
+        async with aiofiles.open(save_location, "wb") as file:
+            await file.write(response.content)
 
         return True, contract_id
 
-    def get_basic_contract_data(self, contract_id: str) -> Tuple[BeautifulSoup, EdoBasicContract]:
-        if not self.is_logged_in:
-            self.login()
+    async def mass_download_async(self, contract_ids: List[str], batch_size: int = 10) -> None:
+        logging.info(f"Preparing to download {len(contract_ids)} archives...")
 
-        response = self.request(
+        batches = batched(contract_ids, batch_size)
+        batch_count = math.ceil(len(contract_ids) / batch_size)
+
+        failed_signed_paths = []
+
+        for idx, batch in enumerate(batches, start=1):
+            logging.info(f"Processing batch {idx}/{batch_count}")
+
+            tasks = []
+            download_url_tasks = []
+            for contract_id in batch:
+                save_folder = self.download_folder / contract_id
+                documents_folder = save_folder / "documents"
+                documents_folder.mkdir(parents=True, exist_ok=True)
+
+                if not (save_folder / "contract.zip").exists():
+                    tasks.append(self.download_file_async(contract_id=contract_id))
+
+                if not any(f.name.lower().endswith("docx") for f in documents_folder.iterdir()):
+                    download_url_tasks.append(self.get_signed_contract_url(contract_id))
+
+            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*download_url_tasks)
+
+            download_signed_tasks = [
+                (self.download_signed_contract(url_path, file_path), url_path, file_path)
+                for res in results
+                for url_path, file_path in res
+            ]
+            results = await asyncio.gather(*download_signed_tasks)
+            for status, url_path, file_path in results:
+                if not status:
+                    failed_signed_paths.append((url_path, file_path))
+
+        for url_path, file_path in failed_signed_paths:
+            await self.download_signed_contract(url_path, file_path)
+
+        for contract_id in contract_ids:
+            save_folder = self.download_folder / contract_id
+            documents_folder = save_folder / "documents"
+            safe_extract(save_folder / "contract.zip", documents_folder=documents_folder)
+
+    async def process_contracts(
+        self,
+        db: DatabaseManager,
+        max_page: int,
+        batch_size: int,
+        contracts_excel_path: Optional[Path] = None,
+    ) -> None:
+        if contracts_excel_path is not None and contracts_excel_path.exists():
+            df = pd.read_excel(contracts_excel_path)
+            df["Рег.№"] = df["Рег.№"].str.strip().str.split(" ").str[-1].replace("№", "")
+            df["Заемщик"] = df["Заемщик"].str.extract(r"(\d{12})")
+            df["contract_id"] = df["ссылка на ЭДС"].str.split("/").str[-1].str.strip()
+            df["Рег.дата"] = df["Рег.дата"].dt.date
+
+            contract_ids = []
+            contracts = []
+            for _, row in df.iterrows():
+                contract = EdoContract(
+                    contract_id=row["contract_id"],
+                    ds_id=row["Рег.№"],
+                    contragent=row["Заемщик"],
+                    ds_date=row["Рег.дата"],
+                    sed_number=row["Порядковый номер"],
+                )
+                contract.save(db)
+                contracts.append(contract)
+                contract_ids.append(contract.contract_id)
+
+            await self.mass_download_async(contract_ids=contract_ids, batch_size=batch_size)
+            return
+
+        if not self.is_logged_in:
+            await self.login()
+
+        for page in range(max_page):
+            html = await self.contracts_page_html(page=page, ascending=False)
+            if not isinstance(html, str):
+                raise Exception(f"Unable to fetch page data...")
+
+            soup = BeautifulSoup(html, "lxml")
+            first_line = soup.text.strip().split("\n")[0]
+
+            if "Вход" in first_line:
+                raise Exception(f"Unable to fetch page data...")
+
+            contract_ids = await self.parse_table_rows(soup, db)
+            await self.mass_download_async(contract_ids=contract_ids, batch_size=batch_size)
+
+    async def get_basic_contract_data(
+        self, contract_id: str
+    ) -> Tuple[BeautifulSoup, EdoBasicContract]:
+        if not self.is_logged_in:
+            await self.login()
+
+        response = await self.request(
             method="get",
             path=f"/workflow/document/view/beff8bc1-14fd-4657-86f1-55797181018f/{contract_id}",
         )
@@ -380,6 +620,14 @@ class EDO(RequestHandler):
         contract_type = (
             tag.text.strip() if (tag := soup.select_one("span.referenceView_f_7127e44")) else None
         )
+        contract_type2 = (
+            tag.text.strip()
+            if (tag := soup.select_one("div#pervichkaTransh > div.panel-row_value"))
+            else None
+        )
+        contract_amount = (
+            tag.text.strip() if (tag := soup.select_one("div#summ > div.panel-row_value")) else None
+        )
         contract_subject = (
             tag.get("value") if (tag := soup.select_one("input#js_f_9190289")) else None
         )
@@ -387,19 +635,21 @@ class EDO(RequestHandler):
         basic_contract = EdoBasicContract(
             contract_id=contract_id,
             contract_type=contract_type,
+            contract_type2=contract_type2,
+            contract_amount=contract_amount,
             contract_subject=contract_subject,
         )
 
         return soup, basic_contract
 
-    def get_signed_contract_url(
+    async def get_signed_contract_url(
         self, contract_id: str, soup: Optional[BeautifulSoup] = None
     ) -> List[Tuple[str, Path]]:
         if not soup:
             if not self.is_logged_in:
-                self.login()
+                await self.login()
 
-            response = self.request(
+            response = await self.request(
                 method="get",
                 path=f"/workflow/document/view/beff8bc1-14fd-4657-86f1-55797181018f/{contract_id}",
             )
@@ -440,7 +690,7 @@ class EDO(RequestHandler):
 
         return download_urls
 
-    def download_signed_contract(self, path: str, file_path: Path) -> bool:
+    async def download_signed_contract(self, path: str, file_path: Path) -> bool:
         headers = self.client.headers.copy()
 
         headers["accept"] = (
@@ -460,21 +710,11 @@ class EDO(RequestHandler):
             "wmk_tpl": "",
         }
 
-        response = self.request(method="get", path=path, params=params, headers=headers)
+        response = await self.request(method="get", path=path, params=params, headers=headers)
         if not response:
-            return False
+            return False, path, file_path
 
-        with file_path.open("wb") as file:
-            file.write(response.content)
+        async with aiofiles.open(file_path, "wb") as file:
+            await file.write(response.content)
 
-        return True
-
-    @override
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> None:
-        self.is_logged_in = False
-        super().__exit__(exc_type, exc_val, exc_tb)
+        return True, path, file_path
