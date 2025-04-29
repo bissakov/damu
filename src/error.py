@@ -8,61 +8,52 @@ from typing import Any, Callable, Optional, Tuple, Type, TypeVar
 
 from PIL import Image, ImageGrab
 
-
-class ReplyError(Exception):
-    pass
+logger = logging.getLogger("DAMU")
 
 
-class CRMNotFoundError(Exception):
-    pass
+class ReplyError(Exception): ...
 
 
-class VypiskaDownloadError(Exception):
-    pass
+class CRMNotFoundError(Exception): ...
 
 
-class HTMLElementNotFound(Exception):
-    pass
+class VypiskaDownloadError(Exception): ...
 
 
-class LoginError(Exception):
-    pass
+class HTMLElementNotFound(Exception): ...
 
 
-def format_error(err: Exception) -> str:
-    stack = traceback.extract_stack(limit=2)[0]
-    filename = Path(stack.filename).name
-    line_number = stack.lineno
-
-    return f"{err.__class__.__name__}({err} {filename}:{line_number})\n"
+class LoginError(Exception): ...
 
 
-class ParseError(Exception):
-    pass
+class ParseError(Exception): ...
 
 
-class ContractsNofFoundError(Exception):
-    pass
+class ContractsNofFoundError(Exception): ...
 
 
-class MismatchError(ParseError):
-    pass
+class MismatchError(ParseError): ...
 
 
-class InterestRateMismatchError(ParseError):
-    pass
+class InterestRateMismatchError(ParseError): ...
 
 
-class InvalidColumnCount(ParseError):
-    pass
+class InvalidColumnCount(ParseError): ...
 
 
-class DateConversionError(ParseError):
-    pass
+class DateConversionError(ParseError): ...
 
 
-class BankNotSupportedError(ParseError):
-    pass
+class BankNotSupportedError(ParseError): ...
+
+
+class DataFrameInequalityError(ParseError): ...
+
+
+class JoinPDFNotFoundError(ParseError): ...
+
+
+class JoinProtocolNotFoundError(ParseError): ...
 
 
 class DateNotFoundError(ParseError):
@@ -93,8 +84,12 @@ class ExcesssiveTableCountError(ParseError):
         super().__init__(self.message)
 
 
-class DataFrameInequalityError(ParseError):
-    pass
+def format_error(err: Exception) -> str:
+    stack = traceback.extract_stack(limit=2)[0]
+    filename = Path(stack.filename).name
+    line_number = stack.lineno
+
+    return f"{err.__class__.__name__}({err} {filename}:{line_number})\n"
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -117,7 +112,7 @@ def retry(
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
-                    logging.warning(
+                    logger.warning(
                         f"Retrying {func.__name__} due to {e!r}. "
                         f"Attempts left: {remaining_tries - 1}"
                     )
@@ -149,7 +144,7 @@ def async_retry(
                 try:
                     return await func(*args, **kwargs)
                 except exceptions as e:
-                    logging.warning(
+                    logger.warning(
                         f"Retrying {func.__name__} due to {e!r}. "
                         f"Attempts left: {remaining_tries - 1}"
                     )
@@ -190,7 +185,7 @@ def handle_error(func: Callable[..., any]) -> Callable[..., any]:
         except KeyboardInterrupt as error:
             raise error
         except (Exception, BaseException) as error:
-            logging.exception(error)
+            logger.exception(error)
             error_traceback = traceback.format_exc()
 
             developer = os.getenv("DEVELOPER")

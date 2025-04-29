@@ -16,6 +16,8 @@ from src.subsidy import EdoContract
 from src.utils.db_manager import DatabaseManager
 from src.utils.request_handler import RequestHandler
 
+logger = logging.getLogger("DAMU")
+
 
 @dataclasses.dataclass
 class EdoNotification:
@@ -105,17 +107,17 @@ class EDO(RequestHandler):
             update_cookies=True,
         )
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         data = response.json()
         data_status = data.get("status")
-        logging.debug(f"Response internal {data_status}")
+        logger.debug(f"Response internal {data_status}")
 
         if data_status not in {3, 9}:
             raise LoginError("Robot was unable to login into the EDO...")
 
-        logging.debug("Login process completed successfully")
+        logger.debug("Login process completed successfully")
 
         self.is_logged_in = True
 
@@ -125,15 +127,15 @@ class EDO(RequestHandler):
 
         response = self.request(method="get", path="lms/get-notify-list")
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         if not hasattr(response, "json"):
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         data = response.json()
-        logging.debug(f"raw_response={data!r}")
+        logger.debug(f"raw_response={data!r}")
         raw_notifications = data.get("data" or {}).get("lms", [])
         notifications = [
             EdoNotification(
@@ -158,7 +160,7 @@ class EDO(RequestHandler):
             path=f"workflow/document/related-document/{notification.doctype_id}/{notification.doc_id}/v_516fba03",
         )
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         html = response.text
@@ -166,12 +168,12 @@ class EDO(RequestHandler):
 
         anchors = soup.select("div > span > a")
         if not anchors:
-            logging.error("Unable to find an attached document")
+            logger.error("Unable to find an attached document")
             raise Exception("Robot was unable to find an attached document")
 
         anchor = anchors[0]
         document_url = anchor.get("href")
-        logging.info(f"Document URL - {document_url!r}")
+        logger.info(f"Document URL - {document_url!r}")
         return document_url
 
     def reply_to_notification(self, notification: EdoNotification, reply: str) -> bool:
@@ -194,15 +196,15 @@ class EDO(RequestHandler):
             data=data,
         )
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         if not hasattr(response, "json"):
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         response_data = response.json()
-        logging.debug(f"raw_response={response_data!r}")
+        logger.debug(f"raw_response={response_data!r}")
 
         response_msg = response_data.get("message", "").strip()
         return response_msg == "Выполнена задача: Исполнить"
@@ -219,7 +221,7 @@ class EDO(RequestHandler):
             data=data,
         )
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         return True
@@ -265,7 +267,7 @@ class EDO(RequestHandler):
         )
 
         if not response:
-            logging.warning("Robot is not logged in to the EDO...")
+            logger.warning("Robot is not logged in to the EDO...")
             raise Exception("Robot is not logged in to the EDO...")
 
         contract_list_html = response.text
@@ -333,7 +335,7 @@ class EDO(RequestHandler):
         save_folder.mkdir(exist_ok=True, parents=True)
         save_location = save_folder / "contract.zip"
         if save_location.exists() and not save_location.stat().st_size == 0:
-            logging.info(f"Valid archive potentially exists...")
+            logger.info(f"Valid archive potentially exists...")
             return True, contract_id
 
         if not self.is_logged_in:
@@ -372,7 +374,7 @@ class EDO(RequestHandler):
         )
 
         if not response:
-            logging.error(f"Unable to fetch {contract_id} page data...")
+            logger.error(f"Unable to fetch {contract_id} page data...")
             raise Exception(f"Unable to fetch {contract_id} page data...")
 
         soup = BeautifulSoup(response.text, features="lxml")
@@ -405,7 +407,7 @@ class EDO(RequestHandler):
             )
 
             if not response:
-                logging.error(f"Unable to fetch {contract_id} page data...")
+                logger.error(f"Unable to fetch {contract_id} page data...")
                 raise Exception(f"Unable to fetch {contract_id} page data...")
 
             soup = BeautifulSoup(
@@ -433,7 +435,7 @@ class EDO(RequestHandler):
 
             file_path = download_folder / file_name
             if file_path.exists():
-                logging.info("Valid file potentially exists...")
+                logger.info("Valid file potentially exists...")
                 continue
 
             download_urls.append((url_path, file_path))

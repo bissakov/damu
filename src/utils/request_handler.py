@@ -8,6 +8,8 @@ from httpx import Cookies, Client, AsyncClient, Response, RequestError
 
 from src.error import async_retry
 
+logger = logging.getLogger("DAMU")
+
 
 class RequestHandler:
     def __init__(self, user: str, password: str, base_url: str, download_folder: Path) -> None:
@@ -51,14 +53,14 @@ class RequestHandler:
         update_cookies: bool,
     ) -> Optional[Response]:
         if response.status_code != 200:
-            logging.warning(f"FAILURE - {method.upper()} {response.status_code} to {path!r}")
+            logger.warning(f"FAILURE - {method.upper()} {response.status_code} to {path!r}")
             return None
 
         if update_cookies:
-            logging.debug(f"Updating cookies with response from {path!r}")
+            logger.debug(f"Updating cookies with response from {path!r}")
             self.update_cookies(response.cookies)
 
-        logging.debug(f"{method.upper()} {response.status_code} to {path!r}")
+        logger.debug(f"{method.upper()} {response.status_code} to {path!r}")
         return response
 
     def request(
@@ -84,7 +86,7 @@ class RequestHandler:
                 timeout=timeout,
             )
         except (RequestError, RuntimeError) as e:
-            logging.error(f"FAILURE - Request to {path!r} failed: {e}")
+            logger.error(f"FAILURE - Request to {path!r} failed: {e}")
             return None
 
         return self._handle_response(response, method, path, update_cookies)
@@ -150,14 +152,14 @@ class AsyncRequestHandler:
         update_cookies: bool,
     ) -> Optional[Response]:
         if response.status_code != 200:
-            logging.warning(f"FAILURE - {method.upper()} {response.status_code} to {path!r}")
+            logger.warning(f"FAILURE - {method.upper()} {response.status_code} to {path!r}")
             return None
 
         if update_cookies:
-            logging.debug(f"Updating cookies with response from {path!r}")
+            logger.debug(f"Updating cookies with response from {path!r}")
             self.update_cookies(response.cookies)
 
-        logging.debug(f"{method.upper()} {response.status_code} to {path!r}")
+        logger.debug(f"{method.upper()} {response.status_code} to {path!r}")
         return response
 
     @async_retry(exceptions=(RequestError,), tries=5, delay=5, backoff=5)
@@ -184,7 +186,7 @@ class AsyncRequestHandler:
                 timeout=timeout,
             )
         except RequestError as e:
-            logging.error(f"FAILURE - Request to {path!r} failed: {e}")
+            logger.error(f"FAILURE - Request to {path!r} failed: {e}")
             return None
 
         return self._handle_response(response, method, path, update_cookies)

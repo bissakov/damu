@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any, ContextManager, Dict, List, Mapping, Optional, Sequence, Union
 
 
+logger = logging.getLogger("DAMU")
+
+
 SQLParam = Union[None, int, float, str, bytes, bool]
 SQLParams = Union[Sequence[SQLParam], Mapping[str, SQLParam]]
 
@@ -35,10 +38,10 @@ class DatabaseManager:
                 return cursor.fetchall()
         except sqlite3.IntegrityError as err:
             query = re.sub(r"\s+", " ", query).strip()
-            logging.error(f"{query!r} with {params=}")
+            logger.error(f"{query!r} with {params=}")
             raise err
         except sqlite3.Error as err:
-            logging.error(f"Database error: {err} - {query!r}")
+            logger.error(f"Database error: {err} - {query!r}")
             raise err
 
     def execute_many(

@@ -180,7 +180,17 @@ class Error:
 
         if "ContractsNofFoundError" in trc:
             human_readable = (
-                "Не найден договор субсидирования (файл .docx) в списке вложенных файлов."
+                "Не найден документ (файл .docx) для обработки в списке вложенных файлов."
+            )
+        elif "JoinPDFNotFoundError" in trc:
+            human_readable = (
+                "PDF файл 'Заявление получателя к договору "
+                "присоединения' для получения номера выписки не найден."
+            )
+        elif "JoinProtocolNotFoundError" in trc:
+            human_readable = (
+                "Номер протокола не найден в файле "
+                "'Заявление получателя к договору присоединения'."
             )
         elif "DateNotFoundError" in trc:
             human_readable = (
@@ -265,7 +275,66 @@ class EdoContract:
 
 
 @dataclass(slots=True)
-class ParseContract:
+class ParseSubsidyContract:
+    contract_id: str
+    protocol_id: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    loan_amount: Optional[float] = None
+    iban: Optional[str] = None
+    df: Optional[pd.DataFrame] = None
+    dbz_id: Optional[str] = None
+    dbz_date: Optional[date] = None
+    file_name: Optional[str] = None
+    settlement_date: Optional[int] = None
+    error: Optional[Error] = None
+
+    def __hash__(self) -> int:
+        return hash((self.contract_id,))
+
+    def to_json(self) -> Dict[str, Union[str, float, None]]:
+        if self.df is None:
+            df_blob = None
+        else:
+            buffer = io.BytesIO()
+            self.df.to_parquet(cast(WriteBuffer[bytes], buffer), engine="fastparquet")
+            df_blob = zlib.compress(buffer.getvalue())
+
+        return {
+            "id": self.contract_id,
+            "protocol_id": self.protocol_id,
+            "start_date": date_to_str(self.start_date),
+            "end_date": date_to_str(self.end_date),
+            "loan_amount": self.loan_amount,
+            "iban": self.iban,
+            "df": df_blob if self.df is not None else None,
+            "dbz_id": self.dbz_id,
+            "dbz_date": date_to_str(self.dbz_date),
+            "file_name": self.file_name,
+            "settlement_date": self.settlement_date,
+        }
+
+    def save(self, db: DatabaseManager) -> None:
+        query = """
+            UPDATE contracts
+            SET protocol_id = :protocol_id,
+                start_date = :start_date,
+                end_date = :end_date,
+                loan_amount = :loan_amount,
+                iban = :iban,
+                df = :df,
+                dbz_id = :dbz_id,
+                dbz_date = :dbz_date,
+                file_name = :file_name,
+                settlement_date = :settlement_date,
+                modified = CURRENT_TIMESTAMP
+            WHERE id = :id
+        """
+        db.execute(query, self.to_json())
+
+
+@dataclass(slots=True)
+class ParseJoinContract:
     contract_id: str
     protocol_id: Optional[str] = None
     start_date: Optional[date] = None
