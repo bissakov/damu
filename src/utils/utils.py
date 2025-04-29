@@ -9,6 +9,9 @@ from typing import Any, BinaryIO, Callable, Dict, Union
 import pandas as pd
 
 
+logger = logging.getLogger("DAMU")
+
+
 def normalize_value(value: str):
     encoding_pairs = [
         ("ibm437", "cp866"),
@@ -30,7 +33,7 @@ def safe_extract(archive_path: Path, documents_folder: Path) -> None:
     try:
         archive = zipfile.ZipFile(archive_path, "r")
     except zipfile.BadZipfile as err:
-        logging.error(f"{archive_path.as_posix()!r} - {err!r}")
+        logger.error(f"{archive_path.as_posix()!r} - {err!r}")
         return
 
     with archive:
@@ -53,7 +56,7 @@ def safe_extract(archive_path: Path, documents_folder: Path) -> None:
                 with archive.open(file) as source, open(extract_path, "wb") as dest:
                     dest.write(source.read())
             except OSError as err:
-                logging.error(err)
+                logger.error(err)
                 raise err
 
 

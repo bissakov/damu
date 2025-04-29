@@ -18,6 +18,8 @@ from src.subsidy import Bank, CrmContract, Error, InterestRate
 from src.utils.db_manager import DatabaseManager
 from src.utils.request_handler import RequestHandler
 
+logger = logging.getLogger("DAMU")
+
 
 @dataclass(slots=True)
 class Record:
@@ -123,25 +125,25 @@ class CRM(RequestHandler):
             "TimeZoneOffset": -300,
         }
 
-        logging.info("Fetching '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies")
+        logger.info("Fetching '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies")
         if not self.request(
             method="post",
             path="servicemodel/authservice.svc/login",
             json=credentials,
             update_cookies=True,
         ):
-            logging.error(
+            logger.error(
                 "Request failed while fetching '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies"
             )
             self.is_logged_in = False
             return False
-        logging.info("Fetched '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies successfully")
+        logger.info("Fetched '.ASPXAUTH', 'BPMCSRF', and 'UserName' cookies successfully")
 
-        logging.debug("Extracting 'BPMCSRF' token from cookies")
+        logger.debug("Extracting 'BPMCSRF' token from cookies")
         self.client.headers["BPMCSRF"] = self.client.cookies.get("BPMCSRF") or ""
-        logging.info("'BPMCSRF' token added to headers")
+        logger.info("'BPMCSRF' token added to headers")
 
-        logging.info("Login process completed successfully")
+        logger.info("Login process completed successfully")
         self.is_logged_in = True
         return True
 
@@ -335,13 +337,13 @@ def fetch_crm_data_one(
         try:
             raise CRMNotFoundError(f"Protocol {protocol_id} not found...")
         except CRMNotFoundError as err:
-            logging.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
+            logger.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
             contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
             contract.error.human_readable = contract.error.get_human_readable()
         contract.error.save(db)
         contract.save(db)
         return contract
-    logging.info(f"CRM - SUCCESS - {protocol_id=}")
+    logger.info(f"CRM - SUCCESS - {protocol_id=}")
 
     contract.project_id = row.get("Id")
     contract.project = row.get("Project", {}).get("displayValue")
@@ -364,13 +366,13 @@ def fetch_crm_data_one(
                 f"Project {contract.project_id} of protocol {protocol_id} not found..."
             )
         except CRMNotFoundError as err:
-            logging.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
+            logger.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
             contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
             contract.error.human_readable = contract.error.get_human_readable()
         contract.error.save(db)
         contract.save(db)
         return contract
-    logging.info(f"CRM - SUCCESS - {contract.project_id=}")
+    logger.info(f"CRM - SUCCESS - {contract.project_id=}")
 
     contract.subsid_amount = project.get("ProjectSubsidAmount") or 0.0
     contract.investment_amount = project.get("ForInvestment") or 0.0
@@ -456,7 +458,7 @@ def fetch_crm_data_one(
         try:
             raise VypiskaDownloadError(f"Vypiska of protocol {protocol_id} was not downloaded...")
         except VypiskaDownloadError as err:
-            logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
+            logger.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
             contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
             contract.error.human_readable = contract.error.get_human_readable()
         contract.error.save(db)
@@ -466,7 +468,7 @@ def fetch_crm_data_one(
     try:
         contract.vypiska_date = datetime.fromisoformat(vypiska_row.get("Date")).date()
     except TypeError as err:
-        logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
+        logger.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
         contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
         contract.error.human_readable = contract.error.get_human_readable()
         contract.error.save(db)
@@ -479,7 +481,7 @@ def fetch_crm_data_one(
             try:
                 raise ValueError(f"{repayment_procedure=} is not str. {vypiska_row=}")
             except ValueError as err:
-                logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
+                logger.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
                 contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
                 contract.error.human_readable = contract.error.get_human_readable()
             contract.error.save(db)
@@ -501,7 +503,7 @@ def fetch_crm_data_one(
             try:
                 raise ValueError(f"{contract.repayment_procedure=} is still None. {vypiska_row=}")
             except ValueError as err:
-                logging.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
+                logger.error(f"CRM - ERROR - {protocol_id=} - {err!r}")
                 contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
                 contract.error.human_readable = contract.error.get_human_readable()
             contract.error.save(db)
@@ -527,5 +529,5 @@ def fetch_crm_data(crm: CRM, db: DatabaseManager, registry: Registry) -> None:
 
     count = len(contracts)
     for idx, (contract_id, protocol_id, start_date, end_date) in enumerate(contracts, start=1):
-        logging.info(f"CRM - {idx:02}/{count} - {contract_id}")
+        logger.info(f"CRM - {idx:02}/{count} - {contract_id}")
         fetch_crm_data_one(crm, contract_id, protocol_id, start_date, end_date, db, registry)

@@ -14,6 +14,9 @@ from requests.exceptions import SSLError
 from src.error import retry
 
 
+logger = logging.getLogger("DAMU")
+
+
 class TelegramAPI:
     def __init__(self) -> None:
         self.session = requests.Session()
@@ -77,16 +80,14 @@ class TelegramAPI:
 
         try:
             if use_session:
-                response = self.session.post(
-                    url, data=send_data, files=files, verify=False
-                )
+                response = self.session.post(url, data=send_data, files=files, verify=False)
             else:
                 response = requests.post(url, data=send_data, files=files, verify=False)
 
             data = "" if not hasattr(response, "json") else response.json()
             status_code = response.status_code
-            logging.info(f"{status_code=}")
-            logging.info(f"{data=}")
+            logger.info(f"{status_code=}")
+            logger.info(f"{data=}")
             response.raise_for_status()
 
             if status_code == 200:
@@ -98,12 +99,10 @@ class TelegramAPI:
             if status_code == 429:
                 self.pending_messages.append(message)
 
-            logging.exception(err)
+            logger.exception(err)
             return False
 
-    def send_image(
-        self, media: Image.Image | None = None, use_session: bool = True
-    ) -> bool:
+    def send_image(self, media: Image.Image | None = None, use_session: bool = True) -> bool:
         try:
             send_data = {"chat_id": self.chat_id}
 
@@ -125,10 +124,10 @@ class TelegramAPI:
                 response = requests.post(url, data=send_data, files=files)
 
             data = "" if not hasattr(response, "json") else response.json()
-            logging.info(f"{response.status_code=}")
-            logging.info(f"{data=}")
+            logger.info(f"{response.status_code=}")
+            logger.info(f"{data=}")
             response.raise_for_status()
             return response.status_code == 200
         except requests.exceptions.ConnectionError as exc:
-            logging.exception(exc)
+            logger.exception(exc)
             return False

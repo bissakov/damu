@@ -10,6 +10,9 @@ import win32com.client as win32
 import win32com
 
 
+logger = logging.getLogger("DAMU")
+
+
 def kill_all_processes(proc_name: str) -> None:
     for proc in psutil.process_iter():
         try:
@@ -97,7 +100,7 @@ class Office:
         try:
             self.doc.Close()
         except (Exception, BaseException) as err:
-            logging.exception(err)
+            logger.exception(err)
             kill_all_processes(proc_name="WINWORD")
 
     def quit_app(self) -> None:
@@ -107,7 +110,7 @@ class Office:
         try:
             self.app.Quit()
         except (Exception, BaseException) as err:
-            logging.exception(err)
+            logger.exception(err)
             kill_all_processes(proc_name="WINWORD")
         del self.app
 

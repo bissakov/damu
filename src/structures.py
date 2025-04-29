@@ -16,6 +16,7 @@ class RegexPatterns:
         re.IGNORECASE,
     )
     wrong_contents: re.Pattern = re.compile(r"дополнительное соглашение", re.IGNORECASE)
+    join_contents: re.Pattern = re.compile(r"договор\w? *присоединени\w", re.IGNORECASE)
     protocol_id: re.Pattern = re.compile(r"№?.?(\d{6})")
     iban: re.Pattern = re.compile(r"коды?:?.+?(KZ[0-9A-Z]{18})", re.IGNORECASE)
     primary_column: re.Pattern = re.compile(
@@ -39,6 +40,10 @@ class RegexPatterns:
             re.compile(r"^19\."),
         ]
     )
+    join_date_rus: re.Pattern = re.compile(
+        r"дата ?\w+ ?срока ?субсидирования:? ?(\d+\.\d+\.\d+)", re.IGNORECASE
+    )
+    join_date_kaz: re.Pattern = re.compile(r"күні ?субсидиялау:? ?(\d+\.\d+\.\d+)", re.IGNORECASE)
     complex_date: re.Pattern = re.compile(r"(((\d{2,}) +(\w+) +(\w+) +(\w+))|(\d+.\d+.\d+))")
     whitespace: re.Pattern = re.compile(r"\s+")
     date_separator: re.Pattern = re.compile(r"[. /-]")
@@ -47,6 +52,17 @@ class RegexPatterns:
     interest_rates1: re.Pattern = re.compile(r"([\d,.]+) ?%? ?\(")
     interest_rates2: re.Pattern = re.compile(r"([\d,.]+) ?%? ?\w")
     interest_rate_para: re.Pattern = re.compile(r"6\.(.+?)7\. ", re.DOTALL)
+    join_protocol_id_rus = re.compile(
+        r"номер ?и ?дата ?решения ?уполномоченного ?органа ?финансового ?агентства ?.*?(\d{5,})",
+        re.IGNORECASE,
+    )
+    join_protocol_id_kaz = re.compile(
+        r"қаржы ?агенттігінің ?уәкілетті ?органы ?шешімінің ?нөмірі ?және ?күні ?.*?(\d{5,})",
+        re.IGNORECASE,
+    )
+    join_loan_amount = re.compile(r"([\d., ]{6,})")
+    join_protocol_id_ocr = re.compile(r"(\d{5,})", re.IGNORECASE)
+    join_pdf_path = re.compile(r"заявление получателя к договору присоединения", re.IGNORECASE)
 
 
 @dataclasses.dataclass(slots=True)

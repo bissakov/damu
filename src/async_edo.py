@@ -21,6 +21,8 @@ from src.utils.db_manager import DatabaseManager
 from src.utils.request_handler import AsyncRequestHandler
 from src.utils.utils import safe_extract
 
+logger = logging.getLogger("DAMU")
+
 
 @dataclasses.dataclass
 class EdoNotification:
@@ -112,17 +114,17 @@ class EDO(AsyncRequestHandler):
             update_cookies=True,
         )
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         data = response.json()
         data_status = data.get("status")
-        logging.debug(f"Response internal {data_status}")
+        logger.debug(f"Response internal {data_status}")
 
         if data_status not in {3, 9}:
             raise LoginError("Robot was unable to login into the EDO...")
 
-        logging.debug("Login process completed successfully")
+        logger.debug("Login process completed successfully")
 
         self.is_logged_in = True
 
@@ -132,15 +134,15 @@ class EDO(AsyncRequestHandler):
 
         response = await self.request(method="get", path="lms/get-notify-list")
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         if not hasattr(response, "json"):
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         data = response.json()
-        logging.debug(f"raw_response={data!r}")
+        logger.debug(f"raw_response={data!r}")
         raw_notifications = data.get("data" or {}).get("lms", [])
         notifications = [
             EdoNotification(
@@ -165,7 +167,7 @@ class EDO(AsyncRequestHandler):
             path=f"workflow/document/related-document/{notification.doctype_id}/{notification.doc_id}/v_516fba03",
         )
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         html = response.text
@@ -173,12 +175,12 @@ class EDO(AsyncRequestHandler):
 
         anchors = soup.select("div > span > a")
         if not anchors:
-            logging.error("Unable to find an attached document")
+            logger.error("Unable to find an attached document")
             raise Exception("Robot was unable to find an attached document")
 
         anchor = anchors[0]
         document_url = anchor.get("href")
-        logging.info(f"Document URL - {document_url!r}")
+        logger.info(f"Document URL - {document_url!r}")
         return document_url
 
     async def reply_to_notification(self, notification: EdoNotification, reply: str) -> bool:
@@ -201,15 +203,15 @@ class EDO(AsyncRequestHandler):
             data=data,
         )
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         if not hasattr(response, "json"):
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         response_data = response.json()
-        logging.debug(f"raw_response={response_data!r}")
+        logger.debug(f"raw_response={response_data!r}")
 
         response_msg = response_data.get("message", "").strip()
         return response_msg == "Выполнена задача: Исполнить"
@@ -226,7 +228,7 @@ class EDO(AsyncRequestHandler):
             data=data,
         )
         if not response:
-            logging.error("Request failed")
+            logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
 
         return True
@@ -267,13 +269,13 @@ class EDO(AsyncRequestHandler):
             return False, -1
 
         if not hasattr(response, "json"):
-            logging.error(f"Response does not have JSON. Text instead - {response.text=}")
+            logger.error(f"Response does not have JSON. Text instead - {response.text=}")
             return False, -1
         data = response.json()
 
         row_count = data.get("total")
         if not row_count:
-            logging.error(f"No key 'total' in {response.json()=}")
+            logger.error(f"No key 'total' in {response.json()=}")
             return False, -1
 
         return True, int(row_count)
@@ -364,7 +366,7 @@ class EDO(AsyncRequestHandler):
         )
 
         if not response:
-            logging.warning("Robot is not logged in to the EDO...")
+            logger.warning("Robot is not logged in to the EDO...")
             raise Exception("Robot is not logged in to the EDO...")
 
         contract_list_html = response.text
@@ -424,7 +426,7 @@ class EDO(AsyncRequestHandler):
         if not self.is_logged_in:
             await self.login()
 
-        logging.info(f"Page {page + 1}")
+        logger.info(f"Page {page + 1}")
 
         headers = self.headers
         headers.update(
@@ -463,7 +465,7 @@ class EDO(AsyncRequestHandler):
         )
 
         if not response:
-            logging.warning("Robot is not logged in to the EDO...")
+            logger.warning("Robot is not logged in to the EDO...")
             raise Exception("Robot is not logged in to the EDO...")
 
         contract_list_html = response.text
@@ -478,7 +480,7 @@ class EDO(AsyncRequestHandler):
         save_folder.mkdir(exist_ok=True, parents=True)
         save_location = save_folder / "contract.zip"
         if save_location.exists() and not save_location.stat().st_size == 0:
-            logging.info(f"Valid archive potentially exists...")
+            logger.info(f"Valid archive potentially exists...")
             return True, contract_id
 
         if not self.is_logged_in:
@@ -508,7 +510,7 @@ class EDO(AsyncRequestHandler):
         return True, contract_id
 
     async def mass_download_async(self, contract_ids: List[str], batch_size: int = 10) -> None:
-        logging.info(f"Preparing to download {len(contract_ids)} archives...")
+        logger.info(f"Preparing to download {len(contract_ids)} archives...")
 
         batches = batched(contract_ids, batch_size)
         batch_count = math.ceil(len(contract_ids) / batch_size)
@@ -516,7 +518,7 @@ class EDO(AsyncRequestHandler):
         failed_signed_paths = []
 
         for idx, batch in enumerate(batches, start=1):
-            logging.info(f"Processing batch {idx}/{batch_count}")
+            logger.info(f"Processing batch {idx}/{batch_count}")
 
             tasks = []
             download_url_tasks = []
@@ -612,7 +614,7 @@ class EDO(AsyncRequestHandler):
         )
 
         if not response:
-            logging.error(f"Unable to fetch {contract_id} page data...")
+            logger.error(f"Unable to fetch {contract_id} page data...")
             raise Exception(f"Unable to fetch {contract_id} page data...")
 
         soup = BeautifulSoup(response.text, features="lxml")
@@ -655,7 +657,7 @@ class EDO(AsyncRequestHandler):
             )
 
             if not response:
-                logging.error(f"Unable to fetch {contract_id} page data...")
+                logger.error(f"Unable to fetch {contract_id} page data...")
                 raise Exception(f"Unable to fetch {contract_id} page data...")
 
             soup = BeautifulSoup(
@@ -683,7 +685,7 @@ class EDO(AsyncRequestHandler):
 
             file_path = download_folder / file_name
             if file_path.exists():
-                logging.info("Valid file potentially exists...")
+                logger.info("Valid file potentially exists...")
                 continue
 
             download_urls.append((url_path, file_path))

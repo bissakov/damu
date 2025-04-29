@@ -20,6 +20,8 @@ from src.subsidy import Error, SubsidyContract
 from src.utils.db_manager import DatabaseManager
 from src.utils.utils import days360, get_column_mapping, save_to_bytes
 
+logger = logging.getLogger("DAMU")
+
 
 class BankExcelMismatchError(Exception):
     pass
@@ -554,12 +556,14 @@ def process_macro(contract_id: str, db: DatabaseManager) -> Macro:
             'АО "Лизинг Групп"',
             'АО "Казахстанская Иджара Компания"',
         }:
-            raise BankNotSupportedError(f"{contract.bank!r} is not supported yet...")
+            raise BankNotSupportedError(
+                f"Банк/лизинг {contract.bank!r} не поддерживается для сверки."
+            )
 
         macro_bytes, shifted_macro_bytes, df_bytes = create_macro(contract=contract)
         validate_macro(df_bytes)
     except (Exception, BaseException) as err:
-        logging.error(f"{err!r}")
+        logger.error(f"{err!r}")
         error.traceback = f"{err!r}\n{traceback.format_exc()}"
         error.human_readable = str(err)
 
@@ -609,7 +613,7 @@ def process_macros(db: DatabaseManager) -> None:
     err_count = 0
     with tqdm(total=len(contracts)) as pbar:
         for contract in contracts:
-            macro = process_macro(contract)
+            macro = process_macro(contract.contract_id, db)
             macro.error.save(db)
             macro.save(db)
             if macro.error.traceback:
