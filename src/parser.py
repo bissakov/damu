@@ -868,7 +868,7 @@ def parse_document(
     os.chdir(os.getenv("project_folder"))
 
     if multiprocessing.current_process().name != "MainProcess":
-        logger.disable(logger.CRITICAL)
+        logging.disable(logging.CRITICAL)
 
     contract = ParseSubsidyContract(contract_id=contract_id, error=Error(contract_id=contract_id))
 

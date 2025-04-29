@@ -3,10 +3,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
-import ocrmypdf
-from rich.console import Console
 from rich.highlighter import ReprHighlighter
-from rich.logging import RichHandler
 from rich.text import Text
 
 

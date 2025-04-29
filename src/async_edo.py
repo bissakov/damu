@@ -714,9 +714,9 @@ class EDO(AsyncRequestHandler):
 
         response = await self.request(method="get", path=path, params=params, headers=headers)
         if not response:
-            return False, path, file_path
+            return False
 
         async with aiofiles.open(file_path, "wb") as file:
             await file.write(response.content)
 
-        return True, path, file_path
+        return True
