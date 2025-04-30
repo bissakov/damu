@@ -32,7 +32,7 @@ def setup_logger(today: Optional[date] = None) -> Path:
     logging.Formatter.converter = lambda *args: datetime.now().timetuple()
 
     stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.DEBUG)
+    stream_handler.setLevel(logging.INFO)
     stream_handler.setFormatter(formatter)
 
     log_folder = Path("logs")
