@@ -366,7 +366,7 @@ class TableParser:
                 self.document.file_path.name, contract.contract_id, table_count
             )
 
-        logger.debug(f"PARSE - found {table_count} table")
+        logger.info(f"PARSE - found {table_count} table")
 
         dfs = []
         for table in tables:
@@ -660,10 +660,10 @@ class SubsidyParser(Parser):
             logger.error("PARSE - WARNING - IBAN not found")
             raise ValueError("IBANs not found...")
         else:
-            logger.debug(f"PARSE - iban={self.contract.iban!r}")
+            logger.info(f"PARSE - iban={self.contract.iban!r}")
 
         self.contract.start_date = self.find_subsidy_date(self.patterns.start_date)
-        logger.debug(f"PARSE - start_date={self.contract.start_date}")
+        logger.info(f"PARSE - start_date={self.contract.start_date}")
         if not self.contract.start_date:
             raise DateNotFoundError(self.document.file_path.name, self.contract.contract_id)
 
@@ -681,13 +681,13 @@ class SubsidyParser(Parser):
         if not self.contract.end_date:
             raise DateNotFoundError(self.document.file_path.name, self.contract.contract_id)
 
-        logger.debug(f"PARSE - end_date={self.contract.end_date}")
+        logger.info(f"PARSE - end_date={self.contract.end_date}")
 
         self.contract.loan_amount = self.find_subsidy_loan_amount()
         if not self.contract.loan_amount:
             logger.error("PARSE - WARNING - loan_amount=None")
         else:
-            logger.debug(f"PARSE - loan_amount={self.contract.loan_amount!r}")
+            logger.info(f"PARSE - loan_amount={self.contract.loan_amount!r}")
 
         dfs = self.table_parser.parse_tables(self.contract)
 
@@ -825,12 +825,12 @@ class JoinParser(Parser):
         if not self.contract.protocol_id:
             logger.error("PARSE - WARNING - protocol_id=None")
         else:
-            logger.debug(f"PARSE - protocol_id={self.contract.protocol_id!r}")
+            logger.info(f"PARSE - protocol_id={self.contract.protocol_id!r}")
 
         if not self.contract.loan_amount:
             logger.error("PARSE - WARNING - loan_amount=None")
         else:
-            logger.debug(f"PARSE - loan_amount={self.contract.loan_amount!r}")
+            logger.info(f"PARSE - loan_amount={self.contract.loan_amount!r}")
 
         ibans = self.find_ibans()
         if len(set(ibans)) > 1:
@@ -845,11 +845,11 @@ class JoinParser(Parser):
             logger.error("PARSE - WARNING - IBAN not found")
             raise ValueError("IBANs not found...")
         else:
-            logger.debug(f"PARSE - iban={self.contract.iban!r}")
+            logger.info(f"PARSE - iban={self.contract.iban!r}")
 
         self.contract.start_date, self.contract.end_date = self.find_join_dates()
-        logger.debug(f"PARSE - start_date={self.contract.start_date}")
-        logger.debug(f"PARSE - end_date={self.contract.start_date}")
+        logger.info(f"PARSE - start_date={self.contract.start_date}")
+        logger.info(f"PARSE - end_date={self.contract.start_date}")
         if not self.contract.start_date or not self.contract.end_date:
             raise DateNotFoundError(self.document.file_path.name, self.contract.contract_id)
 

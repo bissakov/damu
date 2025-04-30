@@ -148,14 +148,14 @@ def process_notification(
     return reply
 
 
-def process_notifications(db: DatabaseManager, edo: EDO, crm: CRM, registry: Registry) -> None:
+def process_notifications(db: DatabaseManager, edo: EDO, crm: CRM, registry: Registry) -> int:
     with edo:
         notifications = edo.get_notifications()
 
         logger.info(f"Found {len(notifications)} notifications")
         if not notifications:
             logger.info(f"Nothing to work on - sleeping...")
-            return
+            return 60
 
         for notification in notifications:
             logger.info(f"Working on notification {notification.notif_id}")
@@ -166,6 +166,8 @@ def process_notifications(db: DatabaseManager, edo: EDO, crm: CRM, registry: Reg
                 reply_to_notification(edo=edo, notification=notification, reply=reply)
             except Exception:
                 continue
+
+    return 0
 
 
 def main():
@@ -189,11 +191,21 @@ def main():
         schema_json_path=registry.schema_json_path,
     )
 
+    start_time = time.time()
+    max_duration = 12 * 60 * 60
+
     while True:
+        elapsed_time = time.time() - start_time
+        logger.info(f"Seconds passed: {int(elapsed_time)}")
+
+        if elapsed_time >= max_duration:
+            logger.info("12 hours have passed. Stopping the loop.")
+            break
+
         with DatabaseManager(registry.database) as db:
-            process_notifications(db=db, edo=edo, crm=crm, registry=registry)
-            logger.info("Current batch is processed - sleeping...")
-            time.sleep(60)
+            duration = process_notifications(db=db, edo=edo, crm=crm, registry=registry)
+            logger.info(f"Current batch is processed - sleeping for {duration} sec...")
+            time.sleep(duration)
 
 
 if __name__ == "__main__":

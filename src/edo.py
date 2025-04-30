@@ -135,8 +135,8 @@ class EDO(RequestHandler):
             raise LoginError("Robot was unable to login into the EDO...")
 
         data = response.json()
-        logger.debug(f"raw_response={data!r}")
         raw_notifications = data.get("data" or {}).get("lms", [])
+        logger.debug(f"raw_notifications={data!r}")
         notifications = [
             EdoNotification(
                 notif_id=notif.get("id"),
