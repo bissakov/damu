@@ -2,17 +2,17 @@ import io
 import logging
 import re
 import zipfile
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Dict, Union
+from typing import Any, BinaryIO
 
 import pandas as pd
-
 
 logger = logging.getLogger("DAMU")
 
 
-def normalize_value(value: str):
+def normalize_value(value: str) -> str:
     encoding_pairs = [
         ("ibm437", "cp866"),
         ("cp65001", "ibm866"),
@@ -26,7 +26,7 @@ def normalize_value(value: str):
             last_exception = err
 
     print(f"Failed to normalize: {value!r}")
-    raise last_exception
+    raise ValueError from last_exception
 
 
 def safe_extract(archive_path: Path, documents_folder: Path) -> None:
@@ -53,7 +53,10 @@ def safe_extract(archive_path: Path, documents_folder: Path) -> None:
                 continue
 
             try:
-                with archive.open(file) as source, open(extract_path, "wb") as dest:
+                with (
+                    archive.open(file) as source,
+                    open(extract_path, "wb") as dest,
+                ):
                     dest.write(source.read())
             except OSError as err:
                 logger.error(err)
@@ -61,14 +64,22 @@ def safe_extract(archive_path: Path, documents_folder: Path) -> None:
 
 
 def compare(df1: pd.DataFrame, df2: pd.DataFrame) -> bool:
-    if (df1.empty and df2.empty) or (df1.empty and not df2.empty) or (df2.empty and not df1.empty):
+    if (
+        (df1.empty and df2.empty)
+        or (df1.empty and not df2.empty)
+        or (df2.empty and not df1.empty)
+    ):
         return True
 
     if len(df1) != len(df2):
         return False
 
     return next(
-        (False for idx in df1.index[~df1["total"]] if not df1.loc[idx].equals(df2.loc[idx])),
+        (
+            False
+            for idx in df1.index[~df1["total"]]
+            if not df1.loc[idx].equals(df2.loc[idx])
+        ),
         True,
     )
 
@@ -82,8 +93,8 @@ def save_to_bytes(write_func: Callable[[BinaryIO], Any]) -> bytes:
 
 
 def days360(
-    start_date: Union[date, datetime, pd.Timestamp],
-    end_date: Union[date, datetime, pd.Timestamp],
+    start_date: date | datetime | pd.Timestamp,
+    end_date: date | datetime | pd.Timestamp,
     method: bool = False,
 ) -> int:
     d1, m1, y1 = start_date.day, start_date.month, start_date.year
@@ -103,7 +114,7 @@ def days360(
     return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1)
 
 
-def get_column_mapping() -> Dict[str, str]:
+def get_column_mapping() -> dict[str, str]:
     return {
         "debt_repayment_date": "Дата погашения основного долга",
         "principal_debt_balance": "Сумма остатка основного долга",

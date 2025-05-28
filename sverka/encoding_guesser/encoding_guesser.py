@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from src.utils.utils import safe_extract
+from utils.utils import safe_extract
 
 
 def guess_encoding(value: str) -> None:
@@ -23,9 +23,12 @@ def guess_encoding(value: str) -> None:
 
 
 def main():
-    folder = Path(r"E:\damu\downloads\2025-02-26\f284894a-af67-44cb-86f7-67c806260176")
+    folder = Path(
+        r"E:\damu\downloads\2025-02-26\f284894a-af67-44cb-86f7-67c806260176"
+    )
     safe_extract(
-        archive_path=folder / "contract.zip", documents_folder=folder / "documents"
+        archive_path=folder / "contract.zip",
+        documents_folder=folder / "documents",
     )
 
 

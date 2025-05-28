@@ -1,27 +1,17 @@
 import io
-import json
 import zlib
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Dict, Optional, Union, cast
+from typing import cast
 
 import pandas as pd
 from pandas import Timestamp
 from pandas._typing import WriteBuffer
 
-from src.utils.db_manager import DatabaseManager
+from utils.db_manager import DatabaseManager
 
 
-class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if is_dataclass(obj):
-            return asdict(obj)
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        return super().default(obj)
-
-
-def date_to_str(dt: Optional[date]) -> Optional[str]:
+def date_to_str(dt: date | None) -> str | None:
     if isinstance(dt, (datetime, Timestamp)):
         return dt.date().isoformat()
     elif isinstance(dt, date):
@@ -30,7 +20,7 @@ def date_to_str(dt: Optional[date]) -> Optional[str]:
         return None
 
 
-def str_to_date(dt: Union[str, Timestamp]) -> Optional[Timestamp]:
+def str_to_date(dt: str | Timestamp) -> Timestamp | None:
     return pd.to_datetime(dt) if isinstance(dt, str) else None
 
 
@@ -38,36 +28,25 @@ def str_to_date(dt: Union[str, Timestamp]) -> Optional[Timestamp]:
 class InterestRate:
     contract_id: str
     subsid_term: int
-    nominal_rate: float
-    rate_one_two_three_year: float
-    rate_four_year: float
-    rate_five_year: float
-    rate_six_seven_year: float
-    rate_fee_one_two_three_year: float
-    rate_fee_four_year: float
-    rate_fee_five_year: float
-    rate_fee_six_seven_year: float
-    start_date_one_two_three_year: Optional[Timestamp] = None
-    end_date_one_two_three_year: Optional[Timestamp] = None
-    start_date_four_year: Optional[Timestamp] = None
-    end_date_four_year: Optional[Timestamp] = None
-    start_date_five_year: Optional[Timestamp] = None
-    end_date_five_year: Optional[Timestamp] = None
-    start_date_six_seven_year: Optional[Timestamp] = None
-    end_date_six_seven_year: Optional[Timestamp] = None
+    nominal_rate: int
+    rate_one_two_three_year: int
+    rate_four_year: int
+    rate_five_year: int
+    rate_six_seven_year: int
+    rate_fee_one_two_three_year: int
+    rate_fee_four_year: int
+    rate_fee_five_year: int
+    rate_fee_six_seven_year: int
+    start_date_one_two_three_year: Timestamp | None = None
+    end_date_one_two_three_year: Timestamp | None = None
+    start_date_four_year: Timestamp | None = None
+    end_date_four_year: Timestamp | None = None
+    start_date_five_year: Timestamp | None = None
+    end_date_five_year: Timestamp | None = None
+    start_date_six_seven_year: Timestamp | None = None
+    end_date_six_seven_year: Timestamp | None = None
 
-    def __post_init__(self) -> None:
-        self.nominal_rate /= 100.0
-        self.rate_one_two_three_year /= 100.0
-        self.rate_four_year /= 100.0
-        self.rate_five_year /= 100.0
-        self.rate_six_seven_year /= 100.0
-        self.rate_fee_one_two_three_year /= 100.0
-        self.rate_fee_four_year /= 100.0
-        self.rate_fee_five_year /= 100.0
-        self.rate_fee_six_seven_year /= 100.0
-
-    def to_json(self) -> Dict[str, Union[str, float, None]]:
+    def to_json(self) -> dict[str, str | float | None]:
         return {
             "id": self.contract_id,
             "subsid_term": self.subsid_term,
@@ -80,14 +59,22 @@ class InterestRate:
             "rate_fee_four_year": self.rate_fee_four_year,
             "rate_fee_five_year": self.rate_fee_five_year,
             "rate_fee_six_seven_year": self.rate_fee_six_seven_year,
-            "start_date_one_two_three_year": date_to_str(self.start_date_one_two_three_year),
-            "end_date_one_two_three_year": date_to_str(self.end_date_one_two_three_year),
+            "start_date_one_two_three_year": date_to_str(
+                self.start_date_one_two_three_year
+            ),
+            "end_date_one_two_three_year": date_to_str(
+                self.end_date_one_two_three_year
+            ),
             "start_date_four_year": date_to_str(self.start_date_four_year),
             "end_date_four_year": date_to_str(self.end_date_four_year),
             "start_date_five_year": date_to_str(self.start_date_five_year),
             "end_date_five_year": date_to_str(self.end_date_five_year),
-            "start_date_six_seven_year": date_to_str(self.start_date_six_seven_year),
-            "end_date_six_seven_year": date_to_str(self.end_date_six_seven_year),
+            "start_date_six_seven_year": date_to_str(
+                self.start_date_six_seven_year
+            ),
+            "end_date_six_seven_year": date_to_str(
+                self.end_date_six_seven_year
+            ),
         }
 
     def save(self, db: DatabaseManager) -> None:
@@ -137,16 +124,17 @@ class InterestRate:
                 :end_date_six_seven_year
             )
         """
-        db.execute(query, self.to_json())
+        db.request(query, self.to_json())
 
 
 @dataclass(slots=True)
 class Error:
     contract_id: str
-    traceback: Optional[str] = None
-    human_readable: Optional[str] = None
+    traceback: str | None = None
+    error: Exception | None = None
+    human_readable: str | None = None
 
-    def to_json(self) -> Dict[str, Union[str, float, None]]:
+    def to_json(self) -> dict[str, str | float | None]:
         return {
             "id": self.contract_id,
             "traceback": self.traceback,
@@ -154,7 +142,11 @@ class Error:
         }
 
     def save(self, db: DatabaseManager) -> None:
-        error_exists = db.execute("SELECT id FROM errors WHERE id = ? LIMIT 1", (self.contract_id,))
+        error_exists = db.request(
+            "SELECT id FROM errors WHERE id = ? LIMIT 1",
+            (self.contract_id,),
+            req_type=db.RequestType.FETCH_ONE,
+        )
         if not error_exists:
             query = """
                 INSERT OR REPLACE INTO errors
@@ -171,16 +163,18 @@ class Error:
                 WHERE id = :id
             """
 
-        db.execute(query, self.to_json())
+        db.request(query, self.to_json())
 
-    def get_human_readable(self) -> Optional[str]:
+    def get_human_readable(self) -> str | None:
         trc = self.traceback
         if trc is None:
             return None
 
         if "ContractsNofFoundError" in trc:
+            human_readable = "Не найден документ (файл .docx) для обработки в списке вложенных файлов."
+        elif "ProtocolIDNotFoundError" in trc:
             human_readable = (
-                "Не найден документ (файл .docx) для обработки в списке вложенных файлов."
+                "Номер протокола не найден во время обработки документа."
             )
         elif "JoinPDFNotFoundError" in trc:
             human_readable = (
@@ -190,34 +184,43 @@ class Error:
         elif "JoinProtocolNotFoundError" in trc:
             human_readable = (
                 "Номер протокола не найден в файле "
-                "'Заявление получателя к договору присоединения'."
+                "'Заявление получателя к договору присоединения'. "
+                "Возможно скан документа невозможно прочесть роботу."
             )
         elif "DateNotFoundError" in trc:
-            human_readable = (
-                "Не удалсь найти либо не удалось обработать дату начала или завершения ДС."
-            )
+            human_readable = "Не удалсь найти либо не удалось обработать дату начала или завершения ДС."
         elif "InvalidColumnCount" in trc or "TableNotFound" in trc:
             human_readable = (
                 "Таблица погашения нестандартного вида, не удалось обработать таблицу. "
                 "Возможные причины - смещеннные строки/колонки, "
                 "неравназначное кол-во именных колонок и колонок данных."
             )
+        elif "EmptyTableError" in trc:
+            human_readable = "Отсутствуют данные в таблицe."
         elif "MismatchError" in trc:
-            human_readable = "Расхождения между строчными и итоговыми данными в таблице погашения."
+            human_readable = (
+                "Расхождения между строчными и итоговыми данными в "
+                "оригинальной таблице погашения (сумма строк неравна итоговым суммам).\n"
+                f"{self.error}"
+            )
+        elif "WrongDataInColumnError" in trc:
+            human_readable = str(self.error)
         elif "ExcesssiveTableCountError" in trc:
             human_readable = "Найдено неверное кол-во таблиц погашений - меньше 1, но больше 2."
         elif "DataFrameInequalityError" in trc:
             human_readable = "Казахские и русские версии таблиц погашений не равны друг другу."
-        elif "BankNotSupportedError" in trc or "Договор Исламского банка" in trc:
+        elif (
+            "BankNotSupportedError" in trc or "Договор Исламского банка" in trc
+        ):
             human_readable = "Данный банк не поддерживается на данный момент."
         elif "Protocol IDs not found" in trc:
-            human_readable = "Номера протоколов не найдены в договоре субсидирования."
+            human_readable = (
+                "Номера протоколов не найдены в договоре субсидирования."
+            )
         elif "IBANs not found" in trc:
             human_readable = "IBAN коды не найдены в договоре субсидирования."
         elif "IBANs are different" in trc:
-            human_readable = (
-                "Расхождения между IBAN кодами в казахской и русской версиях графика погашения."
-            )
+            human_readable = "Расхождения между IBAN кодами в казахской и русской версиях графика погашения."
         elif "CRMNotFoundError" in trc:
             human_readable = "Не удалось найти проект по протоколу в CRM."
         elif "VypiskaDownloadError" in trc:
@@ -236,11 +239,11 @@ class Error:
 class EdoContract:
     contract_id: str
     ds_id: str
-    ds_date: date
+    ds_date: date | None
     contragent: str
     sed_number: str
 
-    def to_json(self) -> Dict[str, Union[str, float, None]]:
+    def to_json(self) -> dict[str, str | float | date | None]:
         return {
             "id": self.contract_id,
             "ds_id": self.ds_id,
@@ -250,8 +253,10 @@ class EdoContract:
         }
 
     def save(self, db: DatabaseManager) -> None:
-        contract_exists = db.execute(
-            "SELECT id FROM contracts WHERE id = ? LIMIT 1", (self.contract_id,)
+        contract_exists = db.request(
+            "SELECT id FROM contracts WHERE id = ? LIMIT 1",
+            (self.contract_id,),
+            req_type=db.RequestType.FETCH_ONE,
         )
         if not contract_exists:
             query = """
@@ -271,33 +276,35 @@ class EdoContract:
                 WHERE id = :id
             """
 
-        db.execute(query, self.to_json())
+        db.request(query, self.to_json())
 
 
 @dataclass(slots=True)
 class ParseSubsidyContract:
     contract_id: str
-    protocol_id: Optional[str] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    loan_amount: Optional[float] = None
-    iban: Optional[str] = None
-    df: Optional[pd.DataFrame] = None
-    dbz_id: Optional[str] = None
-    dbz_date: Optional[date] = None
-    file_name: Optional[str] = None
-    settlement_date: Optional[int] = None
-    error: Optional[Error] = None
+    protocol_id: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    loan_amount: float | None = None
+    iban: str | None = None
+    df: pd.DataFrame | None = None
+    dbz_id: str | None = None
+    dbz_date: date | None = None
+    file_name: str | None = None
+    settlement_date: int | None = None
+    error: Error | None = None
 
     def __hash__(self) -> int:
         return hash((self.contract_id,))
 
-    def to_json(self) -> Dict[str, Union[str, float, None]]:
+    def to_json(self) -> dict[str, str | float | None]:
         if self.df is None:
             df_blob = None
         else:
             buffer = io.BytesIO()
-            self.df.to_parquet(cast(WriteBuffer[bytes], buffer), engine="fastparquet")
+            self.df.to_parquet(
+                cast(WriteBuffer[bytes], buffer), engine="fastparquet"
+            )
             df_blob = zlib.compress(buffer.getvalue())
 
         return {
@@ -330,33 +337,35 @@ class ParseSubsidyContract:
                 modified = CURRENT_TIMESTAMP
             WHERE id = :id
         """
-        db.execute(query, self.to_json())
+        db.request(query, self.to_json())
 
 
 @dataclass(slots=True)
 class ParseJoinContract:
     contract_id: str
-    protocol_id: Optional[str] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    loan_amount: Optional[float] = None
-    iban: Optional[str] = None
-    df: Optional[pd.DataFrame] = None
-    dbz_id: Optional[str] = None
-    dbz_date: Optional[date] = None
-    file_name: Optional[str] = None
-    settlement_date: Optional[int] = None
-    error: Optional[Error] = None
+    protocol_id: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    loan_amount: float | None = None
+    iban: str | None = None
+    df: pd.DataFrame | None = None
+    dbz_id: str | None = None
+    dbz_date: date | None = None
+    file_name: str | None = None
+    settlement_date: int | None = None
+    error: Error | None = None
 
     def __hash__(self) -> int:
         return hash((self.contract_id,))
 
-    def to_json(self) -> Dict[str, Union[str, float, None]]:
+    def to_json(self) -> dict[str, str | float | bytes | None]:
         if self.df is None:
             df_blob = None
         else:
             buffer = io.BytesIO()
-            self.df.to_parquet(cast(WriteBuffer[bytes], buffer), engine="fastparquet")
+            self.df.to_parquet(
+                cast(WriteBuffer[bytes], buffer), engine="fastparquet"
+            )
             df_blob = zlib.compress(buffer.getvalue())
 
         return {
@@ -389,7 +398,7 @@ class ParseJoinContract:
                 modified = CURRENT_TIMESTAMP
             WHERE id = :id
         """
-        db.execute(query, self.to_json())
+        db.request(query, self.to_json())
 
 
 @dataclass(slots=True)
@@ -397,12 +406,12 @@ class Bank:
     contract_id: str
     bank_id: str
     bank: str
-    year_count: Optional[int]
+    year_count: int | None
 
     def __hash__(self) -> int:
         return hash((self.bank_id,))
 
-    def to_json(self) -> Dict[str, Union[str, float, None]]:
+    def to_json(self) -> dict[str, str | float | None]:
         return {
             "id": self.contract_id,
             "bank_id": self.bank_id,
@@ -418,34 +427,84 @@ class Bank:
                 year_count = :year_count
             WHERE id = :id
         """
-        db.execute(query, self.to_json())
+        db.request(query, self.to_json())
+
+
+class _CrmContract:
+    def __init__(self, contract_id: str) -> None:
+        self.contract_id: str = contract_id
+        self._project_id: str | None = None
+        self._project: str | None = None
+        self._customer: str | None = None
+        self._customer_id: str | None = None
+        self._bank_id: str | None = None
+        self._subsid_amount: float | None = None
+        self._investment_amount: float | None = None
+        self._pos_amount: float | None = None
+        self._vypiska_date: date | None = None
+        self._credit_purpose: str | None = None
+        self._repayment_procedure: str | None = None
+        self._request_number: int | None = None
+        self._protocol_date: date | None = None
+        self._decision_date: date | None = None
+        self._dbz_id: str | None = None
+        self._dbz_date: date | None = None
+        self._error: Error | None = None
+
+    @property
+    def project_id(self) -> str:
+        if not self._project_id:
+            raise ValueError()
+        return self._project_id
+
+    @project_id.setter
+    def project_id(self, value: str) -> None:
+        self._project_id = value
+
+    @project_id.deleter
+    def project_id(self) -> None:
+        del self._project_id
+
+    @property
+    def project(self) -> str:
+        if not self._project:
+            raise ValueError()
+        return self._project
+
+    @project.setter
+    def project(self, value: str) -> None:
+        self._project = value
+
+    @project.deleter
+    def project(self) -> None:
+        del self._project
 
 
 @dataclass(slots=True)
 class CrmContract:
     contract_id: str
-    project_id: Optional[str] = None
-    project: Optional[str] = None
-    customer: Optional[str] = None
-    customer_id: Optional[str] = None
-    bank_id: Optional[str] = None
-    subsid_amount: Optional[float] = None
-    investment_amount: Optional[float] = None
-    pos_amount: Optional[float] = None
-    vypiska_date: Optional[date] = None
-    credit_purpose: Optional[str] = None
-    repayment_procedure: Optional[str] = None
-    request_number: Optional[int] = None
-    protocol_date: Optional[date] = None
-    decision_date: Optional[date] = None
-    dbz_id: Optional[str] = None
-    dbz_date: Optional[date] = None
-    error: Optional[Error] = None
+    error: Error
+    project_id: str | None = None
+    project: str | None = None
+    customer: str | None = None
+    customer_id: str | None = None
+    bank_id: str | None = None
+    subsid_amount: float | None = None
+    investment_amount: float | None = None
+    pos_amount: float | None = None
+    vypiska_date: date | None = None
+    credit_purpose: str | None = None
+    repayment_procedure: str | None = None
+    request_number: int | None = None
+    protocol_date: date | None = None
+    decision_date: date | None = None
+    dbz_id: str | None = None
+    dbz_date: date | None = None
 
     def __hash__(self) -> int:
         return hash((self.contract_id,))
 
-    def to_json(self) -> Dict[str, Union[str, float, None]]:
+    def to_json(self) -> dict[str, str | float | None]:
         return {
             "id": self.contract_id,
             "project_id": self.project_id,
@@ -488,7 +547,7 @@ class CrmContract:
                 modified = CURRENT_TIMESTAMP
             WHERE id = :id
         """
-        db.execute(query, self.to_json())
+        db.request(query, self.to_json())
 
 
 @dataclass(slots=True)
@@ -504,14 +563,14 @@ class SubsidyContract:
     rate_four_year: float
     rate_five_year: float
     rate_six_seven_year: float
-    start_date_one_two_three_year: Optional[Timestamp]
-    end_date_one_two_three_year: Optional[Timestamp]
-    start_date_four_year: Optional[Timestamp]
-    end_date_four_year: Optional[Timestamp]
-    start_date_five_year: Optional[Timestamp]
-    end_date_five_year: Optional[Timestamp]
-    start_date_six_seven_year: Optional[Timestamp]
-    end_date_six_seven_year: Optional[Timestamp]
+    start_date_one_two_three_year: Timestamp | None
+    end_date_one_two_three_year: Timestamp | None
+    start_date_four_year: Timestamp | None
+    end_date_four_year: Timestamp | None
+    start_date_five_year: Timestamp | None
+    end_date_five_year: Timestamp | None
+    start_date_six_seven_year: Timestamp | None
+    end_date_six_seven_year: Timestamp | None
 
     def print_rates(self) -> str:
         one_two_three = (
@@ -538,15 +597,23 @@ class SubsidyContract:
 
     def __post_init__(self) -> None:
         if isinstance(self.df, bytes):
-            self.df = pd.read_parquet(io.BytesIO(zlib.decompress(self.df)), engine="fastparquet")
+            self.df = pd.read_parquet(
+                io.BytesIO(zlib.decompress(self.df)), engine="fastparquet"
+            )
 
         self.start_date = str_to_date(self.start_date)
         self.end_date = str_to_date(self.end_date)
-        self.start_date_one_two_three_year = str_to_date(self.start_date_one_two_three_year)
-        self.end_date_one_two_three_year = str_to_date(self.end_date_one_two_three_year)
+        self.start_date_one_two_three_year = str_to_date(
+            self.start_date_one_two_three_year
+        )
+        self.end_date_one_two_three_year = str_to_date(
+            self.end_date_one_two_three_year
+        )
         self.start_date_four_year = str_to_date(self.start_date_four_year)
         self.end_date_four_year = str_to_date(self.end_date_four_year)
         self.start_date_five_year = str_to_date(self.start_date_five_year)
         self.end_date_five_year = str_to_date(self.end_date_five_year)
-        self.start_date_six_seven_year = str_to_date(self.start_date_six_seven_year)
+        self.start_date_six_seven_year = str_to_date(
+            self.start_date_six_seven_year
+        )
         self.end_date_six_seven_year = str_to_date(self.end_date_six_seven_year)

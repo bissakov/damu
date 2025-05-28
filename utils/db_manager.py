@@ -1,25 +1,34 @@
+from __future__ import annotations
+
 import logging
 import re
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, ContextManager, Dict, List, Mapping, Optional, Sequence, Union
-
+from types import TracebackType
+from typing import Any, ContextManager, Literal, Type, cast, overload
 
 logger = logging.getLogger("DAMU")
 
 
-SQLParam = Union[None, int, float, str, bytes, bool]
-SQLParams = Union[Sequence[SQLParam], Mapping[str, SQLParam]]
+SqlDType = int | float | str | bytes | None
+SqlParams = tuple[SqlDType, ...] | dict[str, SqlDType] | None
 
 
 class DatabaseManager:
+    class RequestType(StrEnum):
+        EXECUTE = "execute"
+        FETCH_ONE = "fetch_one"
+        FETCH_ALL = "fetch_all"
+
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
 
     def connect(self) -> ContextManager[sqlite3.Cursor]:
         @contextmanager
-        def wrapped():
+        def wrapped() -> Generator[sqlite3.Cursor]:
             conn = sqlite3.connect(self.db_path)
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
@@ -31,11 +40,67 @@ class DatabaseManager:
 
         return wrapped()
 
-    def execute(self, query: str, params: Optional[SQLParams] = None) -> Sequence[SQLParam]:
+    def execute(self, query: str, params: SqlParams = None) -> None:
+        with self.connect() as cursor:
+            cursor.execute(query, params or ())
+
+    def fetch_one(
+        self, query: str, params: SqlParams = None
+    ) -> tuple[SqlDType, ...]:
+        with self.connect() as cursor:
+            cursor.execute(query, params or ())
+            return cast(tuple[SqlDType, ...], cursor.fetchone())
+
+    def fetch_all(
+        self, query: str, params: SqlParams = None
+    ) -> list[tuple[SqlDType, ...]]:
+        with self.connect() as cursor:
+            cursor.execute(query, params or ())
+            return cursor.fetchall()
+
+    @overload
+    def request(
+        self,
+        query: str,
+        params: SqlParams | None = None,
+    ) -> None: ...
+
+    @overload
+    def request(
+        self,
+        query: str,
+        params: SqlParams = None,
+        *,
+        req_type: Literal[RequestType.EXECUTE],
+    ) -> None: ...
+
+    @overload
+    def request(
+        self,
+        query: str,
+        params: SqlParams = None,
+        *,
+        req_type: Literal[RequestType.FETCH_ONE],
+    ) -> tuple[Any, ...]: ...
+
+    @overload
+    def request(
+        self,
+        query: str,
+        params: SqlParams = None,
+        *,
+        req_type: Literal[RequestType.FETCH_ALL],
+    ) -> list[tuple[Any, ...]]: ...
+
+    def request(
+        self,
+        query: str,
+        params: SqlParams = None,
+        *,
+        req_type: RequestType = RequestType.EXECUTE,
+    ) -> tuple[Any, ...] | list[tuple[Any, ...]] | None:
         try:
-            with self.connect() as cursor:
-                cursor.execute(query, params or ())
-                return cursor.fetchall()
+            return getattr(self, req_type)(query, params)
         except sqlite3.IntegrityError as err:
             query = re.sub(r"\s+", " ", query).strip()
             logger.error(f"{query!r} with {params=}")
@@ -44,27 +109,15 @@ class DatabaseManager:
             logger.error(f"Database error: {err} - {query!r}")
             raise err
 
-    def execute_many(
-        self,
-        query: str,
-        params: Optional[List[Dict[Any, ...]]] = None,
-    ) -> None:
-        with self.connect() as cursor:
-            cursor.executemany(query, params or ())
-
-    def execute_script(self, query: str) -> None:
-        with self.connect() as cursor:
-            cursor.executescript(query)
-
     def prepare_tables(self) -> None:
-        self.execute("PRAGMA journal_mode=WAL")
+        self.request("PRAGMA journal_mode=WAL")
 
-        self.execute("""
+        self.request("""
             CREATE TABLE IF NOT EXISTS contracts (
                 id TEXT NOT NULL UNIQUE PRIMARY KEY,
                 modified TEXT DEFAULT (datetime('now','localtime')),
                 ds_id TEXT NOT NULL,
-                ds_date TEXT NOT NULL,
+                ds_date TEXT,
                 file_name TEXT,
                 contragent TEXT NOT NULL,
                 sed_number TEXT,
@@ -96,20 +149,20 @@ class DatabaseManager:
             )
         """)
 
-        self.execute("""
+        self.request("""
             CREATE TABLE IF NOT EXISTS interest_rates (
                 id TEXT PRIMARY KEY,
                 modified TEXT DEFAULT (datetime('now','localtime')),
                 subsid_term INTEGER,
-                nominal_rate REAL,
-                rate_one_two_three_year REAL,
-                rate_four_year REAL,
-                rate_five_year REAL,
-                rate_six_seven_year REAL,
-                rate_fee_one_two_three_year REAL,
-                rate_fee_four_year REAL,
-                rate_fee_five_year REAL,
-                rate_fee_six_seven_year REAL,
+                nominal_rate INTEGER,
+                rate_one_two_three_year INTEGER,
+                rate_four_year INTEGER,
+                rate_five_year INTEGER,
+                rate_six_seven_year INTEGER,
+                rate_fee_one_two_three_year INTEGER,
+                rate_fee_four_year INTEGER,
+                rate_fee_five_year INTEGER,
+                rate_fee_six_seven_year INTEGER,
                 start_date_one_two_three_year TEXT,
                 end_date_one_two_three_year TEXT,
                 start_date_four_year TEXT,
@@ -122,7 +175,7 @@ class DatabaseManager:
             )
         """)
 
-        self.execute("""
+        self.request("""
             CREATE TABLE IF NOT EXISTS macros (
                 id TEXT NOT NULL PRIMARY KEY,
                 modified TEXT DEFAULT (datetime('now','localtime')),
@@ -133,7 +186,7 @@ class DatabaseManager:
             )
         """)
 
-        self.execute("""
+        self.request("""
             CREATE TABLE IF NOT EXISTS errors (
                 id TEXT NOT NULL PRIMARY KEY,
                 modified TEXT DEFAULT (datetime('now','localtime')),
@@ -144,17 +197,19 @@ class DatabaseManager:
         """)
 
     def clean_up(self) -> None:
-        self.execute("""
-            DELETE FROM errors
-            WHERE traceback IS NULL
-        """)
+        self.request("DELETE FROM errors WHERE traceback IS NULL")
+        self.request("VACUUM")
+        self.request("PRAGMA optimize")
 
-        self.execute_script("VACUUM;PRAGMA optimize;")
-
-    def __enter__(self) -> "DatabaseManager":
+    def __enter__(self) -> DatabaseManager:
         self.prepare_tables()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: Type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if exc_type is None:
             self.clean_up()

@@ -21,3 +21,6 @@ resources/*.xlsx
 *.sqlite-shm
 *.sqlite-wal
 ~$*
+_macros.py
+.dmypy.json
+*.v8i
