@@ -6,15 +6,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
-from typing import List, Optional, Tuple, Type, override
+from typing import Type, cast, override
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, SoupStrainer
 
-from src.error import LoginError, retry
-from src.subsidy import EdoContract
-from src.utils.db_manager import DatabaseManager
-from src.utils.request_handler import RequestHandler
+from sverka.error import LoginError
+from sverka.subsidy import EdoContract
+from utils.db_manager import DatabaseManager
+from utils.request_handler import RequestHandler
 
 logger = logging.getLogger("DAMU")
 
@@ -64,7 +64,6 @@ class EDO(RequestHandler):
 
         self.is_logged_in = False
 
-    @retry(exceptions=(LoginError,), tries=5, delay=5, backoff=5)
     def login(self) -> None:
         self.is_logged_in = False
         self.clear_cookies()
@@ -121,7 +120,7 @@ class EDO(RequestHandler):
 
         self.is_logged_in = True
 
-    def get_notifications(self) -> List[EdoNotification]:
+    def get_notifications(self) -> list[EdoNotification]:
         if not self.is_logged_in:
             self.login()
 
@@ -151,7 +150,9 @@ class EDO(RequestHandler):
         ]
         return notifications
 
-    def get_attached_document_url(self, notification: EdoNotification) -> str:
+    def get_attached_document_url(
+        self, notification: EdoNotification
+    ) -> str | None:
         if not self.is_logged_in:
             self.login()
 
@@ -171,12 +172,21 @@ class EDO(RequestHandler):
             logger.error("Unable to find an attached document")
             raise Exception("Robot was unable to find an attached document")
 
-        anchor = anchors[0]
-        document_url = anchor.get("href")
+        document_url = next(
+            (
+                cast(str, d_url)
+                for anchor in anchors
+                if (d_url := anchor.get("href"))
+                if "beff8bc1-14fd-4657-86f1-55797181018f" in d_url
+            ),
+            None,
+        )
         logger.info(f"Document URL - {document_url!r}")
         return document_url
 
-    def reply_to_notification(self, notification: EdoNotification, reply: str) -> bool:
+    def reply_to_notification(
+        self, notification: EdoNotification, reply: str
+    ) -> bool:
         if not self.is_logged_in:
             self.login()
 
@@ -206,7 +216,7 @@ class EDO(RequestHandler):
         response_data = response.json()
         logger.debug(f"raw_response={response_data!r}")
 
-        response_msg = response_data.get("message", "").strip()
+        response_msg = cast(str, response_data.get("message", "").strip())
         return response_msg == "Выполнена задача: Исполнить"
 
     def mark_as_read(self, notif_id: str) -> bool:
@@ -217,7 +227,7 @@ class EDO(RequestHandler):
 
         response = self.request(
             method="post",
-            path=f"lms/mark-as",
+            path="lms/mark-as",
             data=data,
         )
         if not response:
@@ -273,11 +283,13 @@ class EDO(RequestHandler):
         contract_list_html = response.text
         return contract_list_html
 
-    def find_contract(self, basic_contract_data: EdoBasicContract, db: DatabaseManager) -> None:
+    def find_contract(
+        self, basic_contract: EdoBasicContract, db: DatabaseManager
+    ) -> None:
         if not self.is_logged_in:
             self.login()
 
-        html = self.get_filtered_html(basic_contract_data)
+        html = self.get_filtered_html(basic_contract)
         soup = BeautifulSoup(html, features="lxml")
 
         headers = [
@@ -289,17 +301,27 @@ class EDO(RequestHandler):
         contract = None
 
         row_idx = 0
-        while (current_row := soup.select_one(selector=f"tr#grid_row_{row_idx}")) is not None:
-            row = {
-                header: current_row.select_one(
+        while (
+            current_row := soup.select_one(selector=f"tr#grid_row_{row_idx}")
+        ) is not None:
+            row = {}
+            for html_col_idx, header in headers:
+                tag = current_row.select_one(
                     selector=f":nth-child({html_col_idx + 1})"
-                ).text.strip()
-                for html_col_idx, header in headers
-            }
+                )
+                tag_text = tag.text.strip() if tag else ""
+                row[header] = tag_text
 
-            anchor = current_row.select_one(selector="td.document_extra_info > div > a")
-            href = anchor.get("href", "")
-            if not href.endswith(basic_contract_data.contract_id):
+            anchor = current_row.select_one(
+                selector="td.document_extra_info > div > a"
+            )
+            if not anchor:
+                raise ValueError(
+                    "Selector 'td.document_extra_info > div > a' not found"
+                )
+
+            href = cast(str, anchor.get("href", ""))
+            if not href.endswith(basic_contract.contract_id):
                 row_idx += 1
                 continue
 
@@ -313,29 +335,32 @@ class EDO(RequestHandler):
             ds_id = row["Рег.№"]
             ds_id = ds_id.strip().split(" ")[-1].replace("№", "")
 
+            try:
+                ds_date = datetime.strptime(row["Рег. дата"], "%d.%m.%Y").date()
+            except ValueError:
+                ds_date = None
+
             contract = EdoContract(
-                contract_id=basic_contract_data.contract_id,
+                contract_id=basic_contract.contract_id,
                 ds_id=ds_id,
                 contragent=contragent,
-                ds_date=datetime.strptime(row["Рег. дата"], "%d.%m.%Y").date(),
+                ds_date=ds_date,
                 sed_number=row["Порядковый номер"],
             )
             contract.save(db)
             break
 
         if not contract:
-            raise Exception(f"Contract not found {basic_contract_data.contract_id}!")
+            raise Exception(f"Contract not found {basic_contract.contract_id}!")
 
-    def download_file(self, contract_id: str) -> Tuple[bool, str]:
-        download_path = (
-            f"/media/download-multiple/workflow/beff8bc1-14fd-4657-86f1-55797181018f/{contract_id}"
-        )
+    def download_file(self, contract_id: str) -> tuple[bool, str]:
+        download_path = f"/media/download-multiple/workflow/beff8bc1-14fd-4657-86f1-55797181018f/{contract_id}"
 
         save_folder = self.download_folder / contract_id
         save_folder.mkdir(exist_ok=True, parents=True)
         save_location = save_folder / "contract.zip"
         if save_location.exists() and not save_location.stat().st_size == 0:
-            logger.info(f"Valid archive potentially exists...")
+            logger.info("Valid archive potentially exists...")
             return True, contract_id
 
         if not self.is_logged_in:
@@ -355,7 +380,9 @@ class EDO(RequestHandler):
             }
         )
 
-        response = self.request(method="get", path=download_path, headers=headers)
+        response = self.request(
+            method="get", path=download_path, headers=headers
+        )
         if not response:
             return False, contract_id
 
@@ -364,7 +391,11 @@ class EDO(RequestHandler):
 
         return True, contract_id
 
-    def get_basic_contract_data(self, contract_id: str) -> Tuple[BeautifulSoup, EdoBasicContract]:
+    def get_basic_contract_data(
+        self, contract_id: str, db: DatabaseManager
+    ) -> tuple[
+        BeautifulSoup | None, EdoBasicContract | None, EdoContract | None
+    ]:
         if not self.is_logged_in:
             self.login()
 
@@ -379,12 +410,30 @@ class EDO(RequestHandler):
 
         soup = BeautifulSoup(response.text, features="lxml")
 
+        not_found = (
+            soup.select_one("div.block_alert_contrast.warning") is not None
+        )
+        if not_found:
+            logger.info("Message - 'Документ не найден!'")
+            return None, None, None
+
         contract_type = (
-            tag.text.strip() if (tag := soup.select_one("span.referenceView_f_7127e44")) else None
+            tag.text.strip()
+            if (tag := soup.select_one("span.referenceView_f_7127e44"))
+            else None
         )
+        if not contract_type:
+            raise ValueError(
+                "Selector 'span.referenceView_f_7127e44' not found"
+            )
+
         contract_subject = (
-            tag.get("value") if (tag := soup.select_one("input#js_f_9190289")) else None
+            cast(str, tag.get("value"))
+            if (tag := soup.select_one("input#js_f_9190289"))
+            else None
         )
+        if not contract_subject:
+            raise ValueError("Selector 'input#js_f_9190289' not found")
 
         basic_contract = EdoBasicContract(
             contract_id=contract_id,
@@ -392,11 +441,69 @@ class EDO(RequestHandler):
             contract_subject=contract_subject,
         )
 
-        return soup, basic_contract
+        ds_id_tag = soup.select_one("input[value='Договор №']")
+        if not ds_id_tag:
+            raise ValueError("Selector 'input[value='Договор №']' not found")
+        else:
+            sibling = ds_id_tag.nextSibling
+            if not sibling:
+                raise ValueError(
+                    "Sibling of 'input[value='Договор №']' not found"
+                )
+            ds_id = sibling.text.strip()
+            ds_id = re.sub(r"\s+", " ", ds_id)
+            ds_id = ds_id.strip().split(" ")[-1].replace("№", "")
+
+        page_data: dict[str, str] = {}
+        rows = soup.select(".panel-row")
+        for row in rows:
+            key_tag = row.select_one(".panel-row_key")
+            value_tag = row.select_one(".panel-row_value")
+
+            if not key_tag or not value_tag:
+                continue
+
+            key = key_tag.text.strip().replace(":*", "")
+            if key[-1] == ":":
+                key = key[0:-1]
+            value = re.sub(r"[\r\n]+", "\n", value_tag.text.strip())
+            value = re.sub(r" +", " ", value)
+            page_data[key] = value
+
+        contragent = page_data.get("Заёмщики")
+        if not contragent:
+            contragent = ""
+        else:
+            contragent_match = re.search(r"\d{12}", contragent)
+            if not contragent_match:
+                contragent = ""
+            else:
+                contragent = contragent_match.group(0)
+
+        try:
+            ds_date_str = page_data.get("Дата подписания")
+            if not ds_date_str:
+                raise ValueError("'Дата подписания' not found")
+            ds_date = datetime.strptime(ds_date_str, "%d.%m.%Y").date()
+        except ValueError:
+            ds_date = None
+
+        sed_number = page_data["Порядковый номер"]
+
+        contract = EdoContract(
+            contract_id=contract_id,
+            ds_id=ds_id,
+            contragent=contragent,
+            ds_date=ds_date,
+            sed_number=sed_number,
+        )
+        contract.save(db)
+
+        return soup, basic_contract, contract
 
     def get_signed_contract_url(
-        self, contract_id: str, soup: Optional[BeautifulSoup] = None
-    ) -> List[Tuple[str, Path]]:
+        self, contract_id: str, soup: BeautifulSoup | None = None
+    ) -> list[tuple[str, Path]]:
         if not soup:
             if not self.is_logged_in:
                 self.login()
@@ -419,13 +526,16 @@ class EDO(RequestHandler):
         download_folder = self.download_folder / contract_id / "documents"
         download_folder.mkdir(exist_ok=True, parents=True)
 
-        download_urls = []
+        download_urls: list[tuple[str, Path]] = []
         for el in soup.select("span.attached_file"):
             file_name_el = el.select_one('a.filename[id*="fileview"]')
             url_el = el.select_one("a.decisions_btn")
+            if not url_el:
+                continue
 
             file_name = file_name_el.text.strip() if file_name_el else None
-            url_path = urlparse(url_el.get("href")).path if url_el else None
+            href = cast(str, url_el.get("href"))
+            url_path = urlparse(href).path if url_el else None
 
             if not file_name or not url_path:
                 continue
@@ -462,7 +572,9 @@ class EDO(RequestHandler):
             "wmk_tpl": "",
         }
 
-        response = self.request(method="get", path=path, params=params, headers=headers)
+        response = self.request(
+            method="get", path=path, params=params, headers=headers
+        )
         if not response:
             return False
 
@@ -474,9 +586,9 @@ class EDO(RequestHandler):
     @override
     def __exit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
+        exc_type: Type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         self.is_logged_in = False
         super().__exit__(exc_type, exc_val, exc_tb)

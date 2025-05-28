@@ -1,14 +1,15 @@
+from __future__ import annotations
+
 import logging
 import os
 import shutil
 from enum import Enum
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 import psutil
-import win32com.client as win32
 import win32com
-
+import win32com.client as win32
 
 logger = logging.getLogger("DAMU")
 
@@ -24,22 +25,24 @@ def kill_all_processes(proc_name: str) -> None:
 
 class Office:
     class UnsupportedOfficeAppError(Exception):
-        def __init__(self, office_type: "Office.Type") -> None:
+        def __init__(self, office_type: Office.Type) -> None:
             message = f"Unknown {office_type!r}"
             super().__init__(message)
 
     class Type(Enum):
-        ExcelType: str = "Excel.Application"
-        WordType: str = "Word.Application"
+        ExcelType = "Excel.Application"
+        WordType = "Word.Application"
 
     class Format(Enum):
-        DOCX: int = 16
-        PDF: int = 17
+        DOCX = 16
+        PDF = 17
 
-    def __init__(self, file_path: Union[str, Path], office_type: Type) -> None:
+    def __init__(self, file_path: str | Path, office_type: Type) -> None:
         self.office_type = office_type
 
-        self.file_path: str = str(file_path) if isinstance(file_path, Path) else file_path
+        self.file_path: str = (
+            str(file_path) if isinstance(file_path, Path) else file_path
+        )
         self.project_folder = os.getenv("project_folder")
         if self.project_folder:
             self.file_path = os.path.join(self.project_folder, self.file_path)
@@ -52,15 +55,15 @@ class Office:
         self.app.Visible = False
         self.app.DisplayAlerts = False
 
-        self.potential_error = Office.UnsupportedOfficeAppError(office_type=office_type)
+        self.potential_error = Office.UnsupportedOfficeAppError(
+            office_type=office_type
+        )
 
         match office_type:
             case Office.Type.ExcelType:
                 self.doc = self.open_workbook()
             case Office.Type.WordType:
                 self.doc = self.open_doc()
-            case _:
-                raise self.potential_error
 
     def open_doc(self) -> Any:
         if self.office_type != Office.Type.WordType:
@@ -84,14 +87,26 @@ class Office:
             case _:
                 return False
 
-    def save_as(self, file_path: Union[str, Path], file_format: Format) -> None:
-        file_path: str = str(file_path) if isinstance(file_path, Path) else file_path
-        if not self.validate_format(file_path=file_path, file_format=file_format):
-            raise ValueError(f"File format and extension mismatch - {file_path!r} {file_format!r}")
+    def save_as(
+        self, output_file_path: str | Path, file_format: Format
+    ) -> None:
+        output_file_path = (
+            str(output_file_path)
+            if isinstance(output_file_path, Path)
+            else output_file_path
+        )
+        if not self.validate_format(
+            file_path=output_file_path, file_format=file_format
+        ):
+            raise ValueError(
+                f"File format and extension mismatch - {output_file_path!r} {file_format!r}"
+            )
 
         if self.project_folder:
-            file_path = os.path.join(self.project_folder, file_path)
-        self.doc.SaveAs(file_path, FileFormat=file_format.value)
+            output_file_path = os.path.join(
+                self.project_folder, output_file_path
+            )
+        self.doc.SaveAs(output_file_path, FileFormat=file_format.value)
 
     def close_doc(self) -> None:
         if not self.doc:
@@ -114,7 +129,7 @@ class Office:
             kill_all_processes(proc_name="WINWORD")
         del self.app
 
-    def __enter__(self) -> "Office":
+    def __enter__(self) -> Office:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

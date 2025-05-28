@@ -1,10 +1,13 @@
 [tool.ruff]
 exclude = [".venv", "venv", "pyproject.toml"]
 include = ["*.py"]
-src = ["src"]
+src = ["sverka", "zanesinie", "utils"]
 fix = true
 indent-width = 4
-line-length = 100
+line-length = 120 
 
 [tool.ruff.lint]
 ignore = ["E402", "E203"]
+
+[tool.ruff.format]
+skip-magic-trailing-comma = true

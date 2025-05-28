@@ -1,15 +1,8 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Generator, Iterable
 from itertools import islice
-from typing import (
-    Callable,
-    Generator,
-    Iterable,
-    List,
-    Optional,
-    Protocol,
-    Set,
-    Tuple,
-    TypeVar,
-)
+from typing import Protocol, TypeVar
 
 
 class Hashable(Protocol):
@@ -23,12 +16,25 @@ K = TypeVar("K")
 H = TypeVar("H", bound=Hashable)
 
 
+class SupportsLT(Protocol):
+    def __lt__(self: LT, other: LT) -> bool: ...
+
+
+LT = TypeVar("LT", bound=SupportsLT)
+
+
+class Unset: ...
+
+
+UNSET = Unset()
+
+
 def index(
-    items: List[T],
-    item: Optional[T] = None,
-    condition: Optional[Callable[[T], bool]] = None,
-    default: Optional[int] = None,
-) -> int:
+    items: list[T],
+    item: T | None = None,
+    condition: Callable[[T], bool] | None = None,
+    default: int | None | Unset = UNSET,
+) -> int | None:
     if item is not None and condition is not None:
         raise ValueError("Provide only one of `item` or `condition`, not both.")
 
@@ -36,24 +42,29 @@ def index(
         for idx, element in enumerate(items):
             if condition(element):
                 return idx
-        if default is not None:
+        if not isinstance(default, Unset):
             return default
         raise IndexError("No item matching the condition was found.")
 
     if item is not None:
-        return items.index(item)
+        try:
+            return items.index(item)
+        except ValueError:
+            if not isinstance(default, Unset):
+                return default
+            raise
 
-    if default:
+    if not isinstance(default, Unset):
         return default
 
     raise ValueError("Either `item` or `condition` must be provided.")
 
 
 def rindex(
-    items: List[T],
-    item: Optional[T] = None,
-    condition: Optional[Callable[[T], bool]] = None,
-    default: Optional[int] = None,
+    items: list[T],
+    item: T | None = None,
+    condition: Callable[[T], bool] | None = None,
+    default: int | None = None,
 ) -> int:
     if item is not None and condition is not None:
         raise ValueError("Provide only one of `item` or `condition`, not both.")
@@ -80,19 +91,19 @@ def rindex(
     raise ValueError("Either `item` or `condition` must be provided.")
 
 
-def find(items: Iterable[T], condition: Callable[[T], bool]) -> Optional[T]:
+def find(items: Iterable[T], condition: Callable[[T], bool]) -> T | None:
     return next((item for item in items if condition(item)), None)
 
 
-def find_all(items: Iterable[T], condition: Callable[[T], bool]) -> List[T]:
+def find_all(items: Iterable[T], condition: Callable[[T], bool]) -> list[T]:
     return [item for item in items if condition(item)]
 
 
-def filter_by(items: Iterable[T], condition: Callable[[T], bool]) -> List[T]:
+def filter_by(items: Iterable[T], condition: Callable[[T], bool]) -> list[T]:
     return [item for item in items if condition(item)]
 
 
-def is_progressive(items: Iterable[T]) -> bool:
+def is_progressive(items: Iterable[LT]) -> bool:
     items = iter(items)
 
     try:
@@ -108,14 +119,14 @@ def is_progressive(items: Iterable[T]) -> bool:
     return True
 
 
-def extend_set(set1: Set[T], set2: Set[T]) -> None:
+def extend_set(set1: set[T], set2: set[T]) -> None:
     for item in set2:
         set1.add(item)
 
 
 def batched(
     iterable: Iterable[T], n: int, *, strict: bool = False
-) -> Generator[Tuple[T, ...], None, None]:
+) -> Generator[tuple[T, ...]]:
     if n < 1:
         raise ValueError("n must be at least one")
     iterator = iter(iterable)
