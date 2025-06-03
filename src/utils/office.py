@@ -7,20 +7,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import psutil
 import win32com
 import win32com.client as win32
+from utils.utils import kill_all_processes
 
 logger = logging.getLogger("DAMU")
-
-
-def kill_all_processes(proc_name: str) -> None:
-    for proc in psutil.process_iter():
-        try:
-            if proc_name in proc.name():
-                proc.terminate()
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            continue
 
 
 class Office:
@@ -135,3 +126,55 @@ class Office:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close_doc()
         self.quit_app()
+
+
+def close_doc(doc) -> None:
+    if not doc:
+        return
+
+    try:
+        doc.Close()
+    except (Exception, BaseException) as err:
+        logging.exception(err)
+        kill_all_processes(proc_name="WINWORD")
+
+
+def quit_app(app) -> None:
+    if not app:
+        return
+
+    try:
+        app.Quit()
+    except (Exception, BaseException) as err:
+        logging.exception(err)
+        kill_all_processes(proc_name="WINWORD")
+
+
+def docx_to_pdf(docx_path: Path, pdf_path: Path) -> None:
+    app = None
+    doc = None
+
+    try:
+        app = win32.Dispatch("Word.Application")
+        app.Visible = False
+        app.DisplayAlerts = False
+
+        doc = app.Documents.Open(str(docx_path))
+        doc.SaveAs(str(pdf_path), FileFormat=17)
+    except Exception as e:
+        try:
+            print(docx_path)
+            app = win32.gencache.EnsureDispatch("Word.Application")
+            app.Visible = False
+
+            doc = app.Documents.Open(str(docx_path), OpenAndRepair=True)
+            doc.SaveAs(str(pdf_path), FileFormat=17)
+        except Exception as e2:
+            print(docx_path)
+            close_doc(doc)
+            quit_app(app)
+
+            raise e2
+    finally:
+        close_doc(doc)
+        quit_app(app)

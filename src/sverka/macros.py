@@ -26,9 +26,9 @@ from sverka.error import (
     BankNotSupportedError,
     TotalFalseValueError,
 )
+from sverka.structures import COLUMN_MAPPING
 from sverka.subsidy import Error, SubsidyContract
 from utils.db_manager import DatabaseManager
-from utils.utils import get_column_mapping
 
 logger = logging.getLogger("DAMU")
 
@@ -55,6 +55,7 @@ class Macro(NamedTuple):
     macro: bytes | None
     shifted_macro: bytes | None
     df: bytes | None
+
     error: Error
 
     def to_json(self) -> dict[str, str | bytes | None]:
@@ -175,10 +176,8 @@ def format_style_save(original_df: pd.DataFrame) -> openpyxl.Workbook:
 
     df: pd.DataFrame = original_df.copy()
 
-    mapping = get_column_mapping()
-
-    df = df.loc[:, list(mapping.keys())]
-    df.rename(columns=mapping, inplace=True)
+    df = df.loc[:, list(COLUMN_MAPPING.keys())]
+    df.rename(columns=COLUMN_MAPPING, inplace=True)
 
     with pd.ExcelWriter(
         cast(WriteExcelBuffer, df_excel_buffer), engine="openpyxl"
@@ -275,12 +274,25 @@ def shift_workbook(
         ]
     ]
 
+    df["agency_fee_amount"] = (df["agency_fee_amount"] / 100).astype(float)
+    df["recipient_fee_amount"] = (df["recipient_fee_amount"] / 100).astype(
+        float
+    )
+    df["total_accrued_fee_amount"] = (
+        df["total_accrued_fee_amount"] / 100
+    ).astype(float)
+    df["principal_debt_balance"] = (df["principal_debt_balance"] / 100).astype(
+        float
+    )
+
+    df["principal_debt_balance"] = df["principal_debt_balance"].shift(1)
+
     df["debt_repayment_date"] = pd.to_datetime(
         df["debt_repayment_date"]
     ).dt.strftime("%d.%m.%Y")
     df["debt_repayment_date"] = df["debt_repayment_date"].astype(str)
 
-    df.rename(columns=get_column_mapping(), inplace=True)
+    df.rename(columns=COLUMN_MAPPING, inplace=True)
 
     df_excel_buffer = io.BytesIO()
     with pd.ExcelWriter(
@@ -579,7 +591,7 @@ def create_macro(
     return MacroContents(macro_bytes, shifted_bytes, df_bytes)
 
 
-def retry_create_macro(result: Result, offset: int = 0) -> MacroContents:
+def retry_create_macro(result: Result, raise_exc: bool = True) -> MacroContents:
     df = pd.read_parquet(
         io.BytesIO(result.contents.df_bytes), engine="fastparquet"
     )
@@ -612,7 +624,7 @@ def retry_create_macro(result: Result, offset: int = 0) -> MacroContents:
                 human_readable += f"'Разница между расчетом Банка и Excel' на {debt_repayment_date} равна {bank_excel_diff}\n"
 
         human_readable = human_readable.strip()
-        if human_readable:
+        if human_readable and raise_exc:
             raise BankExcelMismatchError(
                 f"Расхождения >0.02 тиын в колонке 'Разница между расчетом Банка и Excel'\n{human_readable}"
             )
@@ -746,7 +758,10 @@ def generate_macro(macros_folder: Path, contract: SubsidyContract) -> Result:
 
 
 def process_macro(
-    contract_id: str, db: DatabaseManager, macros_folder: Path
+    contract_id: str,
+    db: DatabaseManager,
+    macros_folder: Path,
+    raise_exc: bool = True,
 ) -> Macro:
     data = db.request(
         """
@@ -777,7 +792,7 @@ def process_macro(
             c.id = ?
         """,
         (contract_id,),
-        req_type=db.RequestType.FETCH_ONE,
+        req_type="fetch_one",
     )
 
     contract = SubsidyContract(*data)
@@ -808,7 +823,7 @@ def process_macro(
 
         contents = result.contents
         if result.validation.error:
-            contents = retry_create_macro(result)
+            contents = retry_create_macro(result, raise_exc=raise_exc)
 
         macro_bytes, shifted_bytes, df_bytes = (
             contents.macro_bytes,

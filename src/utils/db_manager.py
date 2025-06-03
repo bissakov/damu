@@ -18,11 +18,6 @@ SqlParams = tuple[SqlDType, ...] | dict[str, SqlDType] | None
 
 
 class DatabaseManager:
-    class RequestType(StrEnum):
-        EXECUTE = "execute"
-        FETCH_ONE = "fetch_one"
-        FETCH_ALL = "fetch_all"
-
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
 
@@ -44,52 +39,32 @@ class DatabaseManager:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
 
-    def fetch_one(
-        self, query: str, params: SqlParams = None
-    ) -> tuple[SqlDType, ...]:
+    def fetch_one(self, query: str, params: SqlParams = None) -> tuple[SqlDType, ...]:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
             return cast(tuple[SqlDType, ...], cursor.fetchone())
 
-    def fetch_all(
-        self, query: str, params: SqlParams = None
-    ) -> list[tuple[SqlDType, ...]]:
+    def fetch_all(self, query: str, params: SqlParams = None) -> list[tuple[SqlDType, ...]]:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
             return cursor.fetchall()
 
     @overload
+    def request(self, query: str, params: SqlParams | None = None) -> None: ...
+
+    @overload
     def request(
-        self,
-        query: str,
-        params: SqlParams | None = None,
+        self, query: str, params: SqlParams = None, *, req_type: Literal["execute"]
     ) -> None: ...
 
     @overload
     def request(
-        self,
-        query: str,
-        params: SqlParams = None,
-        *,
-        req_type: Literal[RequestType.EXECUTE],
-    ) -> None: ...
-
-    @overload
-    def request(
-        self,
-        query: str,
-        params: SqlParams = None,
-        *,
-        req_type: Literal[RequestType.FETCH_ONE],
+        self, query: str, params: SqlParams = None, *, req_type: Literal["fetch_one"]
     ) -> tuple[Any, ...]: ...
 
     @overload
     def request(
-        self,
-        query: str,
-        params: SqlParams = None,
-        *,
-        req_type: Literal[RequestType.FETCH_ALL],
+        self, query: str, params: SqlParams = None, *, req_type: Literal["fetch_all"]
     ) -> list[tuple[Any, ...]]: ...
 
     def request(
@@ -97,7 +72,7 @@ class DatabaseManager:
         query: str,
         params: SqlParams = None,
         *,
-        req_type: RequestType = RequestType.EXECUTE,
+        req_type: Literal["execute", "fetch_one", "fetch_all"] = "execute",
     ) -> tuple[Any, ...] | list[tuple[Any, ...]] | None:
         try:
             return getattr(self, req_type)(query, params)

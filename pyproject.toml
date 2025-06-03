@@ -4,7 +4,7 @@ include = ["*.py"]
 src = ["sverka", "zanesinie", "utils"]
 fix = true
 indent-width = 4
-line-length = 120 
+line-length = 80 
 
 [tool.ruff.lint]
 ignore = ["E402", "E203"]
