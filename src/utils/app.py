@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from time import sleep
 from types import TracebackType
-from typing import Literal, Optional, Type, Union
+from typing import Literal, Type
 
 import pyautogui
 import pyperclip
@@ -18,8 +18,7 @@ import win32gui
 from PIL import ImageDraw, ImageFont, ImageGrab
 from pywinauto import mouse, win32functions
 
-from zanesenie.notification import TelegramAPI
-from zanesenie.utils.utils import kill_all_processes
+from utils.utils import kill_all_processes
 
 pyautogui.FAILSAFE = False
 
@@ -126,7 +125,7 @@ class AppUtils:
     def set_focus(
         self,
         win: pywinauto.WindowSpecification,
-        backend: Optional[None] = None,
+        backend: str | None = None,
         retries: int = 20,
     ) -> None:
         old_backend = self.app.backend.name
@@ -225,20 +224,22 @@ class AppUtils:
 
 class App:
     def __init__(
-        self,
-        app_path: str,
-        app: Optional[pywinauto.Application] = None,
-        bot: Optional[TelegramAPI] = None,
+        self, app_path: str, app: pywinauto.Application | None = None
     ) -> None:
         if not app:
             kill_all_processes("1cv8.exe")
         self.app_path = app_path
-        self.app = app
-        self.utils = AppUtils(app=self.app)
-        self.bot = bot
+        self._app = app
+        self.utils = AppUtils(app=self._app)
+
+    @property
+    def app(self) -> pywinauto.Application:
+        if not self._app:
+            raise RuntimeError("No running application")
+        return self._app
 
     def switch_backend(self, backend: Literal["uia", "win32"]) -> None:
-        self.app = pywinauto.Application(backend=backend).connect(
+        self._app = pywinauto.Application(backend=backend).connect(
             path=r"C:\Program Files (x86)\1cv8\8.3.25.1394\bin\1cv8.exe"
         )
 
@@ -250,110 +251,24 @@ class App:
 
                 pywinauto.Desktop(backend="uia")
 
-                self.app = pywinauto.Application(backend="uia").connect(
+                self._app = pywinauto.Application(backend="uia").connect(
                     path=r"C:\Program Files (x86)\1cv8\8.3.25.1394\bin\1cv8.exe"
                 )
-                self.utils.app = self.app
+                self.utils.app = self._app
                 break
             except (Exception, BaseException) as err:
                 logging.exception(err)
                 kill_all_processes("1cv8.exe")
                 continue
-        assert self.app is not None, Exception("max_retries exceeded")
-        self.utils.app = self.app
-
-    def dialog_text(
-        self,
-        dialog_win: pywinauto.WindowSpecification | None = None,
-    ) -> str:
-        if not dialog_win:
-            dialog_win = self.app.Dialog
-        if not dialog_win.exists() or not dialog_win.is_enabled():
-            return ""
-
-        pyperclip.copy("")
-        dialog_win.type_keys("^C")
-        sleep(2)
-        dialog_text = pyperclip.paste()
-        pyperclip.copy("")
-        logging.info(f"{dialog_text=}")
-
-        if not dialog_text:
-            return ""
-
-        dialog_items = re.split("[\r\n]+", dialog_text)
-        dialog_text = dialog_items[-2]
-        return dialog_text
-
-    def find_and_click_button(
-        self,
-        window: pywinauto.WindowSpecification,
-        toolbar: pywinauto.WindowSpecification,
-        target_button_name: str,
-        horizontal: bool = True,
-        offset: int = 5,
-        step: int = 5,
-    ) -> tuple[int, int]:
-        self.utils.set_focus(window)
-
-        status_win = self.app.window(title_re="Банковская система.+")
-        rectangle = toolbar.rectangle()
-        mid_point = rectangle.mid_point()
-        mouse.move(coords=(mid_point.x, mid_point.y))
-
-        start_point = rectangle.left if horizontal else rectangle.top
-        end_point = mid_point.x if horizontal else mid_point.y
-
-        x, y = mid_point.x, mid_point.y
-        point = 0
-
-        x_offset = offset if horizontal else 0
-        y_offset = offset if not horizontal else 0
-
-        error_count = 0
-
-        i = 0
-        while (
-            active_button := status_win["StatusBar"].window_text().strip()
-        ) != target_button_name:
-            if point > end_point:
-                logging.error(f"{point=}, {end_point=}")
-                logging.error(f"{active_button=}, f{target_button_name=}")
-
-                point = 0
-                i = 0
-                if step > 5:
-                    step = 5
-
-                error_count += 1
-
-                if error_count >= 3:
-                    raise pywinauto.findwindows.ElementNotFoundError
-                continue
-
-            point = start_point + i * step
-
-            if horizontal:
-                x = point
-            else:
-                y = point
-
-            mouse.move(coords=(x, y))
-            i += 1
-
-        x += x_offset
-        y += y_offset
-
-        mouse.click(button="left", coords=(x, y))
-
-        return x, y
+        assert self._app is not None, Exception("max_retries exceeded")
+        self.utils.app = self._app
 
     def reload(self) -> None:
         self.exit()
         self.open_app()
 
     def exit(self) -> None:
-        if not self.app.kill():
+        if self.app and not self.app.kill():
             kill_all_processes("1cv8.exe")
 
     def __enter__(self) -> "App":
@@ -365,53 +280,4 @@ class App:
         exc_type: Type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
-    ):
-        # if exc_val is not None or exc_type is not None or exc_tb is not None:
-        #     if self.bot:
-        #         self.bot.send_message(media=ImageGrab.grab())
-        # self.exit()
-        pass
-
-
-def close_entry_without_saving(
-    utils: AppUtils, order_win: pywinauto.WindowSpecification
-) -> None:
-    dialog_win = utils.app.Dialog
-    if dialog_win.exists() and dialog_win.is_enabled():
-        dialog_win.close()
-
-    order_win.type_keys("{ESC}")
-    confirm_win = utils.get_window(title="Подтверждение")
-    confirm_win["&Нет"].click()
-
-
-def save_excel(colvir: App, work_folder: Path) -> Path:
-    file_win = colvir.utils.get_window(title="Выберите файл для экспорта")
-
-    orders_file_path = work_folder / "orders.xls"
-
-    if orders_file_path.exists():
-        orders_file_path.unlink()
-
-    file_win["Edit4"].set_text(str(orders_file_path))
-    colvir.utils.bi_click_input(file_win["&Save"])
-
-    sort_win = colvir.utils.get_window(title="Сортировка")
-    sort_win["OK"].click()
-
-    sleep(1)
-    if (error_win := colvir.app.window(title="Произошла ошибка")).exists():
-        error_win.close()
-
-    while not orders_file_path.exists():
-        sleep(5)
-    sleep(1)
-
-    if (error_win := colvir.app.window(title="Произошла ошибка")).exists():
-        error_win.close()
-
-    kill_all_processes("EXCEL")
-
-    if (error_win := colvir.app.window(title="Произошла ошибка")).exists():
-        error_win.close()
-    return orders_file_path
+    ) -> None: ...

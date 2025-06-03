@@ -9,7 +9,7 @@ from types import TracebackType
 from typing import Type, cast, override
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup, SoupStrainer
+from bs4 import BeautifulSoup, SoupStrainer, Tag
 
 from sverka.error import LoginError
 from sverka.subsidy import EdoContract
@@ -220,16 +220,9 @@ class EDO(RequestHandler):
         return response_msg == "Выполнена задача: Исполнить"
 
     def mark_as_read(self, notif_id: str) -> bool:
-        data = {
-            "items": notif_id,
-            "is_read": "1",
-        }
+        data = {"items": notif_id, "is_read": "1"}
 
-        response = self.request(
-            method="post",
-            path="lms/mark-as",
-            data=data,
-        )
+        response = self.request(method="post", path="lms/mark-as", data=data)
         if not response:
             logger.error("Request failed")
             raise LoginError("Robot was unable to login into the EDO...")
@@ -454,6 +447,16 @@ class EDO(RequestHandler):
             ds_id = re.sub(r"\s+", " ", ds_id)
             ds_id = ds_id.strip().split(" ")[-1].replace("№", "")
 
+        ds_date = None
+        element = ds_id_tag.parent
+        for ch in element.children:
+            if isinstance(ch, Tag):
+                value = ch.get("value", "").strip()
+                try:
+                    ds_date = datetime.strptime(value, "%d.%m.%Y")
+                except ValueError:
+                    continue
+
         page_data: dict[str, str] = {}
         rows = soup.select(".panel-row")
         for row in rows:
@@ -480,13 +483,14 @@ class EDO(RequestHandler):
             else:
                 contragent = contragent_match.group(0)
 
-        try:
-            ds_date_str = page_data.get("Дата подписания")
-            if not ds_date_str:
-                raise ValueError("'Дата подписания' not found")
-            ds_date = datetime.strptime(ds_date_str, "%d.%m.%Y").date()
-        except ValueError:
-            ds_date = None
+        if not ds_date:
+            try:
+                ds_date_str = page_data.get("Дата подписания")
+                if not ds_date_str:
+                    raise ValueError("'Дата подписания' not found")
+                ds_date = datetime.strptime(ds_date_str, "%d.%m.%Y").date()
+            except ValueError:
+                ds_date = None
 
         sed_number = page_data["Порядковый номер"]
 

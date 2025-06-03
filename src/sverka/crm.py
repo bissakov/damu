@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Type, cast, override
@@ -303,9 +303,7 @@ class CRM(RequestHandler):
             if not file_id or not file_name:
                 continue
             self.download_vypiska(
-                contract_id=contract_id,
-                file_id=file_id,
-                file_name=file_name,
+                contract_id=contract_id, file_id=file_id, file_name=file_name
             )
 
         return vypiska_row
@@ -423,6 +421,8 @@ def fetch_crm_data_one(
     end_date: str,
     db: DatabaseManager,
     registry: Registry,
+    dbz_id: str | None,
+    dbz_date: date | None,
 ) -> CrmContract:
     contract = CrmContract(
         contract_id=contract_id, error=Error(contract_id=contract_id)
@@ -498,13 +498,18 @@ def fetch_crm_data_one(
         bvulk_date, "%Y-%m-%dT%H:%M:%S.%f"
     ).date()
 
+    if dbz_id:
+        contract.dbz_id = dbz_id
+    if dbz_date:
+        contract.dbz_date = dbz_date
     agreement_data = crm.fetch_agreement_data(contract.project_id)
     if agreement_data:
-        contract.dbz_id = (
-            agreement_data.get("NumberDBZ") or ""
-        ).strip() or None
-        dbz_date = agreement_data.get("DateDBZ") or ""
-        contract.dbz_date = pd.to_datetime(dbz_date)
+        if not contract.dbz_id:
+            contract.dbz_id = (agreement_data.get("NumberDBZ")).strip()
+
+        if not contract.dbz_date:
+            dbz_date = agreement_data.get("DateDBZ") or ""
+            contract.dbz_date = pd.to_datetime(dbz_date)
 
     ir = build_interest_rate(contract_id, project, start_date, end_date)
     ir.save(db)

@@ -30,6 +30,7 @@ from sverka.error import (
     WrongDataInColumnError,
 )
 from sverka.structures import (
+    COLUMN_MAPPING,
     MONTHS,
     RE_ALPHA_LETTERS,
     RE_COMPLEX_DATE,
@@ -59,7 +60,7 @@ from sverka.subsidy import Error, ParseJoinContract, ParseSubsidyContract
 from utils.db_manager import DatabaseManager
 from utils.my_collections import find, index
 from utils.office import Office
-from utils.utils import compare, get_column_mapping
+from utils.utils import compare
 
 logger = logging.getLogger("DAMU")
 
@@ -209,7 +210,7 @@ class TableParser:
     def __init__(self, document: SubsidyDocument | JoinDocument) -> None:
         self.document = document
 
-        self.human_readable = get_column_mapping()
+        self.human_readable = COLUMN_MAPPING
         self.expected_columns = [
             "debt_repayment_date",
             "principal_debt_balance",
@@ -538,6 +539,7 @@ class Parser:
 
         easy_exprs = [
             r"Заявление[№ ]+([^ ]+) на выдачу банковского займа от (\d+.\d+.\d+)",
+            r"Заявление.*на.*выдачу.*банковского займа.*от.*(\d\d\.\d\d\.\d\d\d\d).+?№ *([\w\-]+)\s",
             r"ДОГОВОР БАНКОВСКОГО ЗАЙМА № ?([^ ]+) от (\d+.\d+.\d+)",
             r"к заявлению на выдачу банковского займа[№ ]+([^ ]+) +от (\d+.\d+.\d+)",
             r"займа[№ ]+([^ ]+) от (\d+.\d+.\d+)",
@@ -789,6 +791,9 @@ class SubsidyParser(Parser):
             self.contract.iban = ibans[0]
 
         self.contract.dbz_id, self.contract.dbz_date = self.find_dbz()
+        logger.info(
+            f"PARSE - dbz_id={self.contract.dbz_id!r}, dbz_date={self.contract.dbz_date!r}"
+        )
 
         if not self.contract.iban:
             logger.error("PARSE - WARNING - IBAN not found")
@@ -859,10 +864,7 @@ class JoinParser(Parser):
         loan_amount = None
         reader = PdfReader(pdf_path)
 
-        pat_rus, pat_kaz = (
-            RE_JOIN_PROTOCOL_ID_RUS,
-            RE_JOIN_PROTOCOL_ID_KAZ,
-        )
+        pat_rus, pat_kaz = (RE_JOIN_PROTOCOL_ID_RUS, RE_JOIN_PROTOCOL_ID_KAZ)
         pat_loan_amount = RE_JOIN_LOAN_AMOUNT
 
         for page in reader.pages:
@@ -965,10 +967,7 @@ class JoinParser(Parser):
         return protocol_id, loan_amount
 
     def find_join_dates(self) -> tuple[date, date]:
-        pat_rus, pat_kaz = (
-            RE_JOIN_DATE_RUS,
-            RE_JOIN_DATE_KAZ,
-        )
+        pat_rus, pat_kaz = (RE_JOIN_DATE_RUS, RE_JOIN_DATE_KAZ)
 
         dates: list[date] = []
         for para in self.document.paragraphs:

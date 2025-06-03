@@ -38,6 +38,24 @@ MONTHS = {
     "жел": "12",
 }
 
+COLUMN_MAPPING = {
+    "debt_repayment_date": "Дата погашения основного долга",
+    "principal_debt_balance": "Сумма остатка основного долга",
+    "principal_debt_repayment_amount": "Сумма погашения основного долга",
+    "agency_fee_amount": "Сумма вознаграждения, оплачиваемая финансовым агентством",
+    "recipient_fee_amount": "Сумма вознаграждения, оплачиваемая Получателем",
+    "total_accrued_fee_amount": "Итого сумма начисленного вознаграждения",
+    "day_count": "Кол-во дней",
+    "rate": "Ставка вознаграждения",
+    "day_year_count": "Кол-во дней в году",
+    "subsidy_sum": "Сумма рассчитанной субсидии",
+    "bank_excel_diff": "Разница между расчетом Банка и Excel",
+    "check_total": 'Проверка корректности столбца "Итого начисленного вознаграждения"',
+    "ratio": "Соотношение суммы субсидий на итоговую сумму начисленного вознаграждения",
+    "difference2": "Разница между субсидируемой и несубсидируемой частями",
+    "principal_balance_check": "Проверка корректности остатка основного долга после произведенного погашения",
+}
+
 
 RE_FILE_CONTENTS = re.compile(
     r"((бір бөлігін субсидиялау туралы)|(договор субсидирования)|(субсидиялаудың шарты))",
@@ -67,8 +85,7 @@ RE_END_DATES = [
     re.compile(r"^19\."),
 ]
 RE_JOIN_DATE_RUS = re.compile(
-    r"дата ?[\w\s]+ ?субсидирования\D+ ?(\d+\.\d+\.\d+)",
-    re.IGNORECASE,
+    r"дата ?[\w\s]+ ?субсидирования\D+ ?(\d+\.\d+\.\d+)", re.IGNORECASE
 )
 RE_JOIN_DATE_KAZ = re.compile(
     r"күні ?субсидиялау\D+ ?(\d+\.\d+\.\d+)", re.IGNORECASE
@@ -94,81 +111,6 @@ RE_JOIN_PROTOCOL_ID_OCR = re.compile(r"(\d{5,})", re.IGNORECASE)
 RE_JOIN_PDF_PATH = re.compile(
     r"заявление получателя к договору присоединения", re.IGNORECASE
 )
-
-
-@dataclasses.dataclass
-class RegexPatterns:
-    file_name: Pattern[str] = re.compile(
-        r"((дог\w*.?.суб\w*.?)|(дс))",
-        re.IGNORECASE,
-    )
-    file_contents: Pattern[str] = re.compile(
-        r"((бір бөлігін субсидиялау туралы)|(договор субсидирования)|(субсидиялаудың шарты))",
-        re.IGNORECASE,
-    )
-    wrong_contents: Pattern[str] = re.compile(
-        r"дополнительное соглашение", re.IGNORECASE
-    )
-    join_contents: Pattern[str] = re.compile(
-        r"договор\w? *присоединени\w", re.IGNORECASE
-    )
-    protocol_id: Pattern[str] = re.compile(r"№?.?(\d{6})")
-    iban: Pattern[str] = re.compile(
-        r"коды?:?.+?(KZ[0-9A-Z]{18})", re.IGNORECASE
-    )
-    primary_column: Pattern[str] = re.compile(
-        r"((дата *погашени\w+ *основно\w+ *долга)|(негізгі *борышты *өтеу))",
-        re.IGNORECASE,
-    )
-    secondary_column: Pattern[str] = re.compile(
-        r"((сумма *остатка *основного *долга)|(негізгі *борыш\w* *қалды\w* *сомасы))",
-        re.IGNORECASE,
-    )
-    alpha_letters: Pattern[str] = re.compile(r"[а-яәғқңөұүһі]", re.IGNORECASE)
-    kz_letters: Pattern[str] = re.compile(r"[әғқңөұүһі]", re.IGNORECASE)
-    float_number_full: Pattern[str] = re.compile(r"^[\d ., ]+$")
-    float_number: Pattern[str] = re.compile(r"([\d ., ]+)")
-    number: Pattern[str] = re.compile(r"(\d+)")
-    start_date: Pattern[str] = re.compile(r"^9\.")
-    end_dates: list[Pattern[str]] = dataclasses.field(
-        default_factory=lambda: [
-            re.compile(r"^18\."),
-            re.compile(r"^30\."),
-            re.compile(r"^19\."),
-        ]
-    )
-    join_date_rus: Pattern[str] = re.compile(
-        r"дата ?[\w\s]+ ?субсидирования\D+ ?(\d+\.\d+\.\d+)",
-        re.IGNORECASE,
-    )
-    join_date_kaz: Pattern[str] = re.compile(
-        r"күні ?субсидиялау\D+ ?(\d+\.\d+\.\d+)", re.IGNORECASE
-    )
-    complex_date: Pattern[str] = re.compile(
-        r"(((\d{2,}) +(\w+) +(\w+) +(\w+))|(\d+.\d+.\d+))"
-    )
-    whitespace: Pattern[str] = re.compile(r"\s+")
-    date_separator: Pattern[str] = re.compile(r"[. /-]")
-    interest_dates: Pattern[str] = re.compile(
-        r"«?(\d{2,})»? (\w+) «?(\d+)»? (\w+)"
-    )
-    date: Pattern[str] = re.compile(r"(\d+\.\d+\.\d+)")
-    interest_rates1: Pattern[str] = re.compile(r"([\d,.]+) ?%? ?\(")
-    interest_rates2: Pattern[str] = re.compile(r"([\d,.]+) ?%? ?\w")
-    interest_rate_para: Pattern[str] = re.compile(r"6\.(.+?)7\. ", re.DOTALL)
-    join_protocol_id_rus = re.compile(
-        r"номер ?и ?дата ?решения ?уполномоченного ?органа ?финансового ?агентства ?.*?(\d{5,})",
-        re.IGNORECASE,
-    )
-    join_protocol_id_kaz = re.compile(
-        r"қаржы ?агенттігінің ?уәкілетті ?органы ?шешімінің ?нөмірі ?және ?күні ?.*?(\d{5,})",
-        re.IGNORECASE,
-    )
-    join_loan_amount = re.compile(r"([\d., ]{6,})")
-    join_protocol_id_ocr = re.compile(r"(\d{5,})", re.IGNORECASE)
-    join_pdf_path = re.compile(
-        r"заявление получателя к договору присоединения", re.IGNORECASE
-    )
 
 
 class Registry:

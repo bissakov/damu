@@ -11,7 +11,12 @@ from utils.utils import safe_extract
 
 
 def process_contract(
-    logger: Logger, db: DatabaseManager, contract_id: str, edo: EDO, crm: CRM, registry: Registry
+    logger: Logger,
+    db: DatabaseManager,
+    contract_id: str,
+    edo: EDO,
+    crm: CRM,
+    registry: Registry,
 ) -> str:
     logger.info(f"Trying to find a row for {contract_id=!r}")
 
@@ -21,7 +26,9 @@ def process_contract(
     macros_folder = save_folder / "macros"
     macros_folder.mkdir(parents=True, exist_ok=True)
 
-    soup, basic_contract, _ = edo.get_basic_contract_data(contract_id=contract_id, db=db)
+    soup, basic_contract, edo_contract = edo.get_basic_contract_data(
+        contract_id=contract_id, db=db
+    )
     if not basic_contract:
         reply = (
             "Не найден приложенный документ по данной ссылке - "
@@ -29,20 +36,37 @@ def process_contract(
         )
         return reply
 
+    if not edo_contract.ds_date:
+        reply = (
+            "Не найдена дата подписания по данной ссылке - "
+            f"/workflow/document/view/beff8bc1-14fd-4657-86f1-55797181018f/{contract_id}"
+        )
+        return reply
+
     logger.info(f"{basic_contract.contract_type=!r}")
 
-    if basic_contract.contract_type in ["Дополнительное соглашение к договору субсидирования"]:
-        reply = f"Не поддерживаемый тип договора - {basic_contract.contract_type}"
+    if basic_contract.contract_type in [
+        "Дополнительное соглашение к договору субсидирования"
+    ]:
+        reply = (
+            f"Не поддерживаемый тип договора - {basic_contract.contract_type}"
+        )
         return reply
 
     edo.download_file(contract_id=contract_id)
-    download_info = edo.get_signed_contract_url(contract_id=contract_id, soup=soup)
-    download_statuses = [edo.download_signed_contract(url, fpath) for url, fpath in download_info]
+    download_info = edo.get_signed_contract_url(
+        contract_id=contract_id, soup=soup
+    )
+    download_statuses = [
+        edo.download_signed_contract(url, fpath) for url, fpath in download_info
+    ]
     if not all(download_statuses):
         reply = "Не удалось скачать подписанный ЭЦП договор."
         return reply
 
-    safe_extract(save_folder / "contract.zip", documents_folder=documents_folder)
+    safe_extract(
+        save_folder / "contract.zip", documents_folder=documents_folder
+    )
 
     parse_contract = parse_document(
         contract_id=contract_id,
@@ -67,13 +91,20 @@ def process_contract(
             start_date=date_to_str(parse_contract.start_date),
             end_date=date_to_str(parse_contract.end_date),
             registry=registry,
+            dbz_id=parse_contract.dbz_id,
+            dbz_date=parse_contract.dbz_date,
         )
 
     if crm_contract.error and crm_contract.error.traceback:
         reply = f"{crm_contract.error.human_readable}\nНе удалось выгрузить данные из CRM."
         return reply
 
-    macro = process_macro(contract_id=contract_id, db=db, macros_folder=macros_folder)
+    macro = process_macro(
+        contract_id=contract_id,
+        db=db,
+        macros_folder=macros_folder,
+        raise_exc=False,
+    )
     macro.error.save(db)
     macro.save(db)
 

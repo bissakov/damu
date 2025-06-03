@@ -5,4 +5,5 @@ call start-shell.bat
 popd
 
 call .\venv\Scripts\activate.bat
-nvim.exe .
+start "" goneovim.exe
+exit /b

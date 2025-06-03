@@ -145,7 +145,7 @@ class Error:
         error_exists = db.request(
             "SELECT id FROM errors WHERE id = ? LIMIT 1",
             (self.contract_id,),
-            req_type=db.RequestType.FETCH_ONE,
+            req_type="fetch_one",
         )
         if not error_exists:
             query = """
@@ -256,7 +256,7 @@ class EdoContract:
         contract_exists = db.request(
             "SELECT id FROM contracts WHERE id = ? LIMIT 1",
             (self.contract_id,),
-            req_type=db.RequestType.FETCH_ONE,
+            req_type="fetch_one",
         )
         if not contract_exists:
             query = """

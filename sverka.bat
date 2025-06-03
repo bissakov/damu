@@ -1,4 +1,6 @@
 @echo off
-cd %~dp0
+set "ROOT=%~dp0"
+pushd %ROOT%src
 
-.\venv\Scripts\python.exe -O -m sverka.main
+%ROOT%venv\Scripts\python.exe -O -m sverka.main
+popd

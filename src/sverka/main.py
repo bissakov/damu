@@ -1,7 +1,6 @@
 import inspect
 import logging
 import os
-import shutil
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -12,10 +11,13 @@ import dotenv
 import httpx
 import pytz
 
-project_folder = Path(__file__).resolve().parent.parent
+project_folder = Path(__file__).resolve().parent.parent.parent
 os.environ["project_folder"] = str(project_folder)
 os.chdir(project_folder)
 sys.path.append(str(project_folder))
+sys.path.append(str(project_folder / "sverka"))
+sys.path.append(str(project_folder / "utils"))
+sys.path.append(str(project_folder / "zanesenie"))
 
 from sverka.crm import CRM, fetch_crm_data_one
 from sverka.edo import EDO, EdoNotification
@@ -24,7 +26,12 @@ from sverka.parser import parse_document
 from sverka.structures import Registry
 from sverka.subsidy import date_to_str
 from utils.db_manager import DatabaseManager
-from utils.utils import safe_extract
+from utils.utils import (
+    delete_leftovers,
+    humanize_timedelta,
+    is_tomorrow,
+    safe_extract,
+)
 
 
 def setup_logger(_today: date | None = None) -> None:
@@ -34,7 +41,9 @@ def setup_logger(_today: date | None = None) -> None:
     damu = logging.getLogger("DAMU")
     damu.setLevel(logging.DEBUG)
 
-    formatter.converter = lambda *args: datetime.now(pytz.timezone("Asia/Almaty")).timetuple()
+    formatter.converter = lambda *args: datetime.now(
+        pytz.timezone("Asia/Almaty")
+    ).timetuple()
 
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.INFO)
@@ -78,7 +87,12 @@ class TelegramAPI:
         self.client.close()
         self.client = httpx.Client()
 
-    def send_message(self, message: str | None = None, use_session: bool = True, use_md: bool = False) -> bool:
+    def send_message(
+        self,
+        message: str | None = None,
+        use_session: bool = True,
+        use_md: bool = False,
+    ) -> bool:
         send_data: dict[str, str | None] = {"chat_id": self.chat_id}
 
         if use_md:
@@ -132,7 +146,9 @@ class TelegramAPI:
         return False
 
 
-def reply_to_notification(edo: EDO, notification: EdoNotification, bot: TelegramAPI, reply: str) -> None:
+def reply_to_notification(
+    edo: EDO, notification: EdoNotification, bot: TelegramAPI, reply: str
+) -> None:
     reply = inspect.cleandoc(reply)
     logger.info(f"Notification reply - {reply!r}")
 
@@ -149,7 +165,11 @@ def reply_to_notification(edo: EDO, notification: EdoNotification, bot: Telegram
 
 
 def process_notification(
-    db: DatabaseManager, edo: EDO, crm: CRM, registry: Registry, notification: EdoNotification
+    db: DatabaseManager,
+    edo: EDO,
+    crm: CRM,
+    registry: Registry,
+    notification: EdoNotification,
 ) -> str:
     document_url = edo.get_attached_document_url(notification)
     if not document_url:
@@ -166,7 +186,9 @@ def process_notification(
     macros_folder = save_folder / "macros"
     macros_folder.mkdir(parents=True, exist_ok=True)
 
-    soup, basic_contract, _ = edo.get_basic_contract_data(contract_id=contract_id, db=db)
+    soup, basic_contract, _ = edo.get_basic_contract_data(
+        contract_id=contract_id, db=db
+    )
     if not basic_contract:
         reply = (
             "Не найден приложенный документ по данной ссылке - "
@@ -176,18 +198,28 @@ def process_notification(
 
     logger.info(f"{basic_contract.contract_type=!r}")
 
-    if basic_contract.contract_type in ["Дополнительное соглашение к договору субсидирования"]:
-        reply = f"Не поддерживаемый тип договора - {basic_contract.contract_type}"
+    if basic_contract.contract_type in [
+        "Дополнительное соглашение к договору субсидирования"
+    ]:
+        reply = (
+            f"Не поддерживаемый тип договора - {basic_contract.contract_type}"
+        )
         return reply
 
     edo.download_file(contract_id=contract_id)
-    download_info = edo.get_signed_contract_url(contract_id=contract_id, soup=soup)
-    download_statuses = [edo.download_signed_contract(url, fpath) for url, fpath in download_info]
+    download_info = edo.get_signed_contract_url(
+        contract_id=contract_id, soup=soup
+    )
+    download_statuses = [
+        edo.download_signed_contract(url, fpath) for url, fpath in download_info
+    ]
     if not all(download_statuses):
         reply = "Не удалось скачать подписанный ЭЦП договор."
         return reply
 
-    safe_extract(save_folder / "contract.zip", documents_folder=documents_folder)
+    safe_extract(
+        save_folder / "contract.zip", documents_folder=documents_folder
+    )
 
     parse_contract = parse_document(
         contract_id=contract_id,
@@ -212,13 +244,17 @@ def process_notification(
             start_date=date_to_str(parse_contract.start_date),
             end_date=date_to_str(parse_contract.end_date),
             registry=registry,
+            dbz_id=parse_contract.dbz_id,
+            dbz_date=parse_contract.dbz_date,
         )
 
     if crm_contract.error and crm_contract.error.traceback:
         reply = f"{crm_contract.error.human_readable}\nНе удалось выгрузить данные из CRM."
         return reply
 
-    macro = process_macro(contract_id=contract_id, db=db, macros_folder=macros_folder)
+    macro = process_macro(
+        contract_id=contract_id, db=db, macros_folder=macros_folder
+    )
     macro.error.save(db)
     macro.save(db)
 
@@ -236,7 +272,13 @@ def process_notification(
 failed_notifications: set[str] = set()
 
 
-def process_notifications(db: DatabaseManager, edo: EDO, crm: CRM, registry: Registry, bot: TelegramAPI) -> int:
+def process_notifications(
+    db: DatabaseManager,
+    edo: EDO,
+    crm: CRM,
+    registry: Registry,
+    bot: TelegramAPI,
+) -> int:
     with edo:
         notifications = edo.get_notifications()
 
@@ -253,58 +295,41 @@ def process_notifications(db: DatabaseManager, edo: EDO, crm: CRM, registry: Reg
 
             logger.info(f"Working on notification {notification.notif_id}")
             try:
-                reply = process_notification(db=db, edo=edo, crm=crm, registry=registry, notification=notification)
+                reply = process_notification(
+                    db=db,
+                    edo=edo,
+                    crm=crm,
+                    registry=registry,
+                    notification=notification,
+                )
                 if "Неизвестная ошибка" in reply:
                     failed_notifications.add(notification.notif_id)
                     logger.error(reply)
                     tg_dev_name = os.environ["TG_DEV_NAME"]
-                    bot.send_message(f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(failed_notifications)}.")
-                    logger.error(f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}.")
+                    bot.send_message(
+                        f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                    )
+                    logger.error(
+                        f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                    )
                     continue
-                reply_to_notification(edo=edo, notification=notification, bot=bot, reply=reply)
+                reply_to_notification(
+                    edo=edo, notification=notification, bot=bot, reply=reply
+                )
             except Exception as err:
                 logging.exception(err)
                 logging.error(f"{err!r}")
                 bot.send_message(f"{err!r}")
                 failed_notifications.add(notification.notif_id)
-                logger.error(f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}.")
+                logger.error(
+                    f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                )
                 continue
 
     if failed_notifications:
         return 150
     else:
         return 0
-
-
-def humanize_timedelta(seconds: int | float) -> str:
-    td = timedelta(seconds=int(seconds))
-    return str(td)
-
-
-def is_tomorrow(tomorrow: date) -> bool:
-    return datetime.now(pytz.timezone("Asia/Almaty")).date() >= tomorrow
-
-
-def delete_leftovers(download_folder: Path, max_days: int = 14) -> None:
-    for folder in download_folder.parent.iterdir():
-        if not folder.is_dir():
-            continue
-
-        if not any(folder.iterdir()):
-            logger.info(f"Deleting empty {folder.name!r} folder")
-            folder.rmdir()
-            continue
-
-        try:
-            run_date = date.fromisoformat(folder.name)
-        except ValueError:
-            continue
-        delta = (today - run_date).days
-        if delta <= max_days:
-            continue
-
-        logger.info(f"Deleting {folder.name!r} folder. {delta} > {max_days}")
-        shutil.rmtree(folder)
 
 
 def main() -> None:
@@ -336,7 +361,7 @@ def main() -> None:
     max_duration = 12 * 60 * 60
     tomorrow = today + timedelta(days=1)
 
-    delete_leftovers(registry.download_folder)
+    delete_leftovers(registry.download_folder, today)
 
     try:
         while True:
@@ -348,8 +373,12 @@ def main() -> None:
                 break
 
             with DatabaseManager(registry.database) as db:
-                duration = process_notifications(db=db, edo=edo, crm=crm, registry=registry, bot=bot)
-                logger.info(f"Current batch is processed - sleeping for {humanize_timedelta(duration)}...")
+                duration = process_notifications(
+                    db=db, edo=edo, crm=crm, registry=registry, bot=bot
+                )
+                logger.info(
+                    f"Current batch is processed - sleeping for {humanize_timedelta(duration)}..."
+                )
                 time.sleep(duration)
 
     finally:
