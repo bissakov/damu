@@ -247,10 +247,13 @@ def a(main_win: WindowSpecification, action: Callable[[], None]) -> None:
 
 
 def click(
-    main_win: WindowSpecification, element: UiaElement, double: bool = False
+    main_win: WindowSpecification,
+    element: UiaElement,
+    button: Literal["left", "right", "middle"] = "left",
+    double: bool = False,
 ) -> None:
     focus(main_win)
-    element.click_input(double=double)
+    element.click_input(button=button, double=double)
 
 
 def _click(element: UiaElement, double: bool = False) -> None:

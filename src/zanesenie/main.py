@@ -5,7 +5,6 @@ import inspect
 import logging
 import os
 import re
-import shutil
 import sys
 import time
 import warnings
@@ -20,15 +19,16 @@ from urllib.parse import urljoin
 
 import dotenv
 import httpx
-import pandas as pd
 import pyperclip
 import pytz
 from pywinauto import ElementNotFoundError, WindowSpecification
+from pywinauto.controls.uiawrapper import UIAWrapper
 from urllib3.exceptions import InsecureRequestWarning
 
 project_folder = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_folder))
 sys.path.append(str(project_folder / "src"))
+os.chdir(str(project_folder))
 
 
 from sverka.crm import CRM
@@ -72,7 +72,7 @@ def setup_logger(_today: date | None = None) -> Path:
     ).timetuple()
 
     stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.INFO)
+    stream_handler.setLevel(logging.DEBUG)
     stream_handler.setFormatter(formatter)
 
     log_folder = Path("logs/zanesinie")
@@ -189,13 +189,13 @@ def reply_to_notification(
     edo.mark_as_read(notif_id=notification.notif_id)
 
 
-def prepare_query(contragent: str) -> str:
+def prepare_query(contragent: str, protocol_id: str) -> str:
     query = f"""
         ВЫБРАТЬ Проекты.Ссылка
         ИЗ Справочник.Контрагенты КАК Агенты
         ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Проектыконтрагентов КАК Проекты
         ПО Агенты.Ссылка = Проекты.Владелец
-        ГДЕ Агенты.БИНИИН = "{contragent}"
+        ГДЕ Агенты.БИНИИН = "{contragent}" И Проекты.НомерПротокола = "{protocol_id}"
         УПОРЯДОЧИТЬ ПО Проекты.ДатаПротокола УБЫВ
     """
 
@@ -215,6 +215,7 @@ def iso_to_standard(dt: str) -> str:
 @dataclasses.dataclass(slots=True)
 class Contract:
     contract_id: str
+    contract_type: str
     contragent: str
     project: str
     bank: str
@@ -222,8 +223,6 @@ class Contract:
     repayment_procedure: str
     loan_amount: float
     subsid_amount: float
-    investment_amount: float
-    pos_amount: float
     protocol_date: str
     vypiska_date: str
     decision_date: str
@@ -279,6 +278,12 @@ class Contract:
 
         self.macro_path = macro_path
 
+        protocol_ids = self.protocol_id.split(";")
+        if "Транш" in self.contract_type:
+            self.protocol_id = protocol_ids[0]
+        else:
+            self.protocol_id = protocol_ids[-1]
+
     @classmethod
     def iter_contracts(
         cls, db: DatabaseManager, bank_mapping: dict[str, dict[str, str]]
@@ -287,6 +292,7 @@ class Contract:
             """
         SELECT
             c.id,
+            c.contract_type,
             c.contragent,
             c.project,
             c.bank,
@@ -294,8 +300,6 @@ class Contract:
             c.repayment_procedure,
             c.loan_amount,
             c.subsid_amount,
-            c.investment_amount,
-            c.pos_amount,
             c.protocol_date,
             c.vypiska_date,
             c.decision_date,
@@ -356,6 +360,7 @@ def get_contract(
         """
         SELECT
             c.id,
+            c.contract_type,
             c.contragent,
             c.project,
             c.bank,
@@ -363,8 +368,6 @@ def get_contract(
             c.repayment_procedure,
             c.loan_amount,
             c.subsid_amount,
-            c.investment_amount,
-            c.pos_amount,
             c.protocol_date,
             c.vypiska_date,
             c.decision_date,
@@ -529,7 +532,7 @@ def find_row(
     return None
 
 
-def find_project(win: WindowSpecification, contract: Contract) -> None:
+def find_project(win: WindowSpecification, contract: Contract) -> bool:
     click(win, child(win, title="Консоль запросов и обработчик", ctrl="Button"))
 
     with suppress(ElementNotFoundError):
@@ -538,25 +541,28 @@ def find_project(win: WindowSpecification, contract: Contract) -> None:
             child(win, ctrl="Button", title="Maximize"),
         )
 
-    query_document_box = child(win, ctrl="Document")
+    query_document_box = cast(
+        UIAWrapper | WindowSpecification, child(win, ctrl="Document")
+    )
 
-    query = prepare_query(contract.contragent)
-    pyperclip.copy(query)
+    query = prepare_query(contract.contragent, contract.protocol_id)
+    query = query.replace("\n", "~")
 
-    click(win, query_document_box)
-    send_keys(win, "^a^v", pause=0.5)
+    click(win, query_document_box, button="right")
+    send_keys(win, "{DOWN 3}~")
+    send_keys(win, query, spaces=True, pause=0)
     click(win, child(win, title="Выполнить", ctrl="Button"))
 
     if not wait(
         child(win, title="Delete", ctrl="Button", idx=1), wait_for="is_enabled"
     ):
         print(f"{contract.contract_id=} not found")
-        return
+        return False
 
     row = find_row(win, project=contract.project)
     if not row:
         print(f"{contract.contract_id=} not found")
-        return
+        return False
 
     click(win, row, double=True)
 
@@ -569,6 +575,7 @@ def find_project(win: WindowSpecification, contract: Contract) -> None:
         )
     ):
         click(win, close_button)
+    return True
 
 
 def fill_main_project_data(
@@ -686,20 +693,20 @@ def change_sums(
         send_keys(win, "{TAB 5}" + str(contract.subsid_amount), pause=0.1)
     elif contract.credit_purpose == "Инвестиционный + ПОС":
         if (
-            existing_pos_amount != contract.pos_amount
-            and existing_investment_amount != contract.investment_amount
+            existing_pos_amount != contract.subsid_amount
+            and existing_investment_amount != contract.subsid_amount
         ):
             send_keys(
                 win,
                 "{TAB 4}"
-                + str(contract.pos_amount)
+                + str(contract.subsid_amount)
                 + "{TAB}"
-                + str(contract.investment_amount),
+                + str(contract.subsid_amount),
                 pause=0.1,
             )
-        elif existing_pos_amount != contract.pos_amount:
+        elif existing_pos_amount != contract.subsid_amount:
             send_keys(win, "{TAB 4}" + str(contract.subsid_amount), pause=0.1)
-        elif existing_investment_amount != contract.investment_amount:
+        elif existing_investment_amount != contract.subsid_amount:
             send_keys(win, "{TAB 5}" + str(contract.subsid_amount), pause=0.1)
 
     send_keys(win, "{ESC}", pause=0.5)
@@ -729,29 +736,29 @@ def add_vypiska(
 
     click(win, child(form, title="Прикрепленные документы", ctrl="TabItem"))
 
-    click(
-        win,
-        child(form, ctrl="Button", title="Set list filter and sort options..."),
-    )
-
-    sort_win = window(one_c.app, title="Filter and Sort")
-
-    check(child(sort_win, title="Наименование файла", ctrl="CheckBox"))
-
-    click_type(
-        win,
-        child(sort_win, ctrl="Edit", idx=7),
-        fname,
-        spaces=True,
-        escape_chars=True,
-    )
-
-    click(win, child(sort_win, title="OK", ctrl="Button"))
-
-    sleep(1)
-
-    if contains_text(child(form, ctrl="Table")):
-        return
+    # click(
+    #     win,
+    #     child(form, ctrl="Button", title="Set list filter and sort options..."),
+    # )
+    #
+    # sort_win = window(one_c.app, title="Filter and Sort")
+    #
+    # check(child(sort_win, title="Наименование файла", ctrl="CheckBox"))
+    #
+    # click_type(
+    #     win,
+    #     child(sort_win, ctrl="Edit", idx=7),
+    #     fname,
+    #     spaces=True,
+    #     escape_chars=True,
+    # )
+    #
+    # click(win, child(sort_win, title="OK", ctrl="Button"))
+    #
+    # sleep(1)
+    #
+    # if contains_text(child(form, ctrl="Table")):
+    #     return
 
     click(win, child(form, title="Add", ctrl="Button"))
     click(win, child(win, ctrl="Edit", idx=5))
@@ -862,20 +869,37 @@ def fill_contract_details(
             ent=True,
             cls=True,
         )
-        click_type(
-            win,
-            child(ds_form, ctrl="Edit", idx=20),
-            str(contract.investment_amount),
-            ent=True,
-            cls=True,
-        )
-        click_type(
-            win,
-            child(ds_form, ctrl="Edit", idx=19),
-            str(contract.pos_amount),
-            ent=True,
-            cls=True,
-        )
+
+        if contract.credit_purpose == "Инвестиционный":
+            click_type(
+                win,
+                child(ds_form, ctrl="Edit", idx=20),
+                str(contract.loan_amount),
+                ent=True,
+                cls=True,
+            )
+        elif contract.credit_purpose == "Пополнение оборотных средств":
+            click_type(
+                win,
+                child(ds_form, ctrl="Edit", idx=19),
+                str(contract.loan_amount),
+                ent=True,
+                cls=True,
+            )
+        elif contract.credit_purpose == "Инвестиционный + ПОС":
+            click_type(
+                win,
+                child(ds_form, ctrl="Edit", idx=19),
+                str(contract.subsid_amount),
+                ent=True,
+            )
+            click_type(
+                win,
+                child(ds_form, ctrl="Edit", idx=20),
+                str(contract.subsid_amount),
+                ent=True,
+            )
+
         click_type(
             win,
             child(ds_form, ctrl="Edit", idx=3),
@@ -972,27 +996,27 @@ def fill_contract_details(
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=18),
-                str(contract.pos_amount),
+                str(contract.subsid_amount),
                 ent=True,
             )
         elif contract.credit_purpose == "Инвестиционный":
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=19),
-                str(contract.investment_amount),
+                str(contract.subsid_amount),
                 ent=True,
             )
         elif contract.credit_purpose == "Инвестиционный + ПОС":
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=18),
-                str(contract.pos_amount),
+                str(contract.subsid_amount),
                 ent=True,
             )
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=19),
-                str(contract.investment_amount),
+                str(contract.subsid_amount),
                 ent=True,
             )
         else:
@@ -1160,16 +1184,24 @@ def fill_1c(
         win.wait(wait_for="exists", timeout=60)
         win.maximize()
 
-        find_project(win=win, contract=contract)
+        if not find_project(win=win, contract=contract):
+            return (
+                f"Не удалось найти проект '{contract.project.strip()}' контрагента c БИН "
+                f"'{contract.contragent}' и номером протокола '{contract.protocol_id}'"
+            )
 
         form = child(win, ctrl="Pane", idx=27)
 
-        goto_button = child(form, title="Go to", ctrl="Button")
-        fill_main_project_data(win, form, contract)
-        change_date(win, form, goto_button, contract.protocol_date)
-        change_sums(win, form, goto_button, contract)
+        if "Транш" not in contract.contract_type:
+            goto_button = child(form, title="Go to", ctrl="Button")
+            fill_main_project_data(win, form, contract)
+            change_date(win, form, goto_button, contract.protocol_date)
+            change_sums(win, form, goto_button, contract)
+
         add_vypiska(one_c, win, form, contract)
-        check_project_type(win, form, contract)
+
+        if "Транш" not in contract.contract_type:
+            check_project_type(win, form, contract)
 
         ds_form = fill_contract(one_c, win, form, contract, rate)
 
@@ -1264,7 +1296,7 @@ def fill_1c(
             click(win, yes_button)
             sleep(1)
 
-        click(win, child(table_form, title="OK", ctrl="Button"))
+        click(win, child(table_form, title="Закрыть", ctrl="Button"))
 
         click(win, child(ds_form, title="Обновить", ctrl="Button"))
         if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
@@ -1280,44 +1312,8 @@ def fill_1c(
         click(win, child(form, title="Записать", ctrl="Button"))
         click(win, child(form, title="OK", ctrl="Button"))
 
-        # potential_error_pane = child(win, ctrl="Pane", idx=2)
-        # if "Operation cannot be performed" in (err_msg := text(child(potential_error_pane, ctrl="Pane"))):
-        #     print(err_msg)
-        #     click(win, child(potential_error_pane, ctrl="Button", title="OK"))
-        #
-        # # click(win, child(ds_form, title="Закрыть", ctrl="Button"))
-        # click(win, child(ds_form, title="Передать на проверку", ctrl="Button"))
-        #
-        # sleep(2)
-        #
-        # check_form = child(win, ctrl="Pane", idx=63)
-        # click(
-        #     win,
-        #     child(
-        #         check_form,
-        #         ctrl="Button",
-        #         title="Внести информацию по текущему событию",
-        #     ),
-        # )
-        # click(win, child(check_form, ctrl="Button", title="Записать и закрыть"))
-        #
-        # if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
-        #     click(win, yes_button)
-        #     sleep(1)
-        #
-        # click(win, child(ds_form, title="Закрыть", ctrl="Button"))
-        #
-        # if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
-        #     click(win, yes_button)
-        #     sleep(1)
-        #
-        # click(win, child(win, ctrl="Button", title="No"))
-        #
-        # if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
-        #     click(win, yes_button)
-        #     sleep(1)
-        #
-        # click(win, child(form, ctrl="Button", title="OK"))
+    if contract.credit_purpose == "Рефинансирование":
+        return "Договор успешно занесен в 1С в проект с целевым назначением 'Рефинансирование'."
 
     return "Договор успешно занесен в 1С"
 
@@ -1329,18 +1325,17 @@ def process_notification(
     registry: Registry,
     notification: EdoNotification,
 ) -> str:
-    document_url = edo.get_attached_document_url(notification)
+    document_url = edo.get_attached_document_url(
+        notification.doctype_id, notification.doc_id
+    )
     if not document_url:
         reply = "Не найден приложенный документ на странице поручения."
         return reply
 
     contract_id = document_url.split("/")[-1]
 
-    # if contract_id in [
-    #     "88bf6f73-520e-4f79-8a2a-6838401200d9",
-    #     "c275ec8b-0339-4912-996c-682ebb4600c2",
-    # ]:
-    #     return "Договор успешно занесен в 1С"
+    # if contract_id in ["24e78ed3-c73b-48a6-bb0c-68496b1602b8"]:
+    #     return "Неизвестная ошибка"
 
     reply = process_contract(
         logger=logger,
@@ -1360,7 +1355,8 @@ def process_notification(
         logger.info(f"{rate=!r}")
 
         try:
-            fill_1c(contract, rate, registry, "base.v8i")
+            reply = fill_1c(contract, rate, registry, "base.v8i")
+            return reply
         except Exception as e:
             logger.exception(e)
             return "Неизвестная ошибка"
@@ -1408,6 +1404,7 @@ def process_notifications(
                     registry=registry,
                     notification=notification,
                 )
+
                 if "Неизвестная ошибка" in reply:
                     failed_notifications.add(notification.notif_id)
                     logger.error(reply)
@@ -1419,6 +1416,10 @@ def process_notifications(
                         f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
                     )
                     continue
+
+                if "CRM на данный момент не доступен" in reply:
+                    continue
+
                 reply_to_notification(
                     edo=edo, notification=notification, bot=bot, reply=reply
                 )
@@ -1487,10 +1488,10 @@ def main() -> None:
                     db=db, edo=edo, crm=crm, registry=registry, bot=bot
                 )
 
-                logger.info(
-                    f"Current batch is processed - sleeping for {humanize_timedelta(duration)}..."
-                )
-                time.sleep(duration)
+            logger.info(
+                f"Current batch is processed - sleeping for {humanize_timedelta(duration)}..."
+            )
+            time.sleep(duration)
 
     finally:
         logger.info("FINISH")

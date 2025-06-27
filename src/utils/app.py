@@ -9,7 +9,6 @@ from types import TracebackType
 from typing import Literal, Type
 
 import pyautogui
-import pyperclip
 import pywinauto
 import pywinauto.base_wrapper
 import pywinauto.timings
@@ -57,7 +56,7 @@ class AppUtils:
             draw = ImageDraw.Draw(img)
             font = ImageFont.truetype("arial.ttf", size=34)
 
-            img_width, img_height = img.size
+            img_width, _ = img.size
             bbox = draw.textbbox((0, 0), text, font=font)
 
             text_width = bbox[2] - bbox[0]

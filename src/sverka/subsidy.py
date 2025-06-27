@@ -188,7 +188,9 @@ class Error:
                 "Возможно скан документа невозможно прочесть роботу."
             )
         elif "DateNotFoundError" in trc:
-            human_readable = "Не удалсь найти либо не удалось обработать дату начала или завершения ДС."
+            human_readable = "Не удалось найти либо не удалось обработать дату начала или завершения ДС."
+        elif "FloatConversionError" in trc:
+            human_readable = "Не удалось преобразовать значения графика погашения в числовой формат."
         elif "InvalidColumnCount" in trc or "TableNotFound" in trc:
             human_readable = (
                 "Таблица погашения нестандартного вида, не удалось обработать таблицу. "
@@ -223,6 +225,8 @@ class Error:
             human_readable = "Расхождения между IBAN кодами в казахской и русской версиях графика погашения."
         elif "CRMNotFoundError" in trc:
             human_readable = "Не удалось найти проект по протоколу в CRM."
+        elif "ProtocolDateNotInRangeError" in trc:
+            human_readable = "Не согласовано. Дата первого протокола превышает 180 дней (6 месяцев)."
         elif "VypiskaDownloadError" in trc:
             human_readable = "Не удалось скачать выписку из CRM."
         elif "TypeError" in trc and "vypiska_date" in trc:
@@ -240,16 +244,16 @@ class EdoContract:
     contract_id: str
     ds_id: str
     ds_date: date | None
-    contragent: str
     sed_number: str
+    contract_type: str
 
     def to_json(self) -> dict[str, str | float | date | None]:
         return {
             "id": self.contract_id,
             "ds_id": self.ds_id,
             "ds_date": self.ds_date,
-            "contragent": self.contragent,
             "sed_number": self.sed_number,
+            "contract_type": self.contract_type,
         }
 
     def save(self, db: DatabaseManager) -> None:
@@ -261,9 +265,9 @@ class EdoContract:
         if not contract_exists:
             query = """
                 INSERT OR REPLACE INTO contracts
-                (id, ds_id, ds_date, contragent, sed_number)
+                (id, ds_id, ds_date, sed_number, contract_type)
                 VALUES
-                (:id, :ds_id, :ds_date, :contragent, :sed_number)
+                (:id, :ds_id, :ds_date, :sed_number, :contract_type)
             """
         else:
             query = """
@@ -271,8 +275,8 @@ class EdoContract:
                 SET id = :id,
                     ds_id = :ds_id,
                     ds_date = :ds_date,
-                    contragent = :contragent,
-                    sed_number = :sed_number
+                    sed_number = :sed_number,
+                    contract_type = :contract_type
                 WHERE id = :id
             """
 
@@ -500,6 +504,7 @@ class CrmContract:
     decision_date: date | None = None
     dbz_id: str | None = None
     dbz_date: date | None = None
+    contragent: str | None = None
 
     def __hash__(self) -> int:
         return hash((self.contract_id,))
@@ -523,6 +528,7 @@ class CrmContract:
             "decision_date": date_to_str(self.decision_date),
             "dbz_id": self.dbz_id,
             "dbz_date": date_to_str(self.dbz_date),
+            "contragent": self.contragent,
         }
 
     def save(self, db: DatabaseManager) -> None:
@@ -544,6 +550,7 @@ class CrmContract:
                 decision_date = :decision_date,
                 dbz_id = :dbz_id,
                 dbz_date = :dbz_date,
+                contragent = :contragent,
                 modified = CURRENT_TIMESTAMP
             WHERE id = :id
         """

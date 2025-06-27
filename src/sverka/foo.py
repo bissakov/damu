@@ -4,14 +4,18 @@ import shutil
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import dotenv
 import pytz
 
-project_folder = Path(__file__).resolve().parent.parent
+project_folder = Path(__file__).resolve().parent.parent.parent
 os.environ["project_folder"] = str(project_folder)
 os.chdir(project_folder)
 sys.path.append(str(project_folder))
+sys.path.append(str(project_folder / "sverka"))
+sys.path.append(str(project_folder / "utils"))
+sys.path.append(str(project_folder / "zanesenie"))
 
 from sverka.crm import CRM, fetch_crm_data_one
 from sverka.edo import EDO
@@ -23,48 +27,47 @@ from utils.db_manager import DatabaseManager
 from utils.utils import safe_extract
 
 
-def setup_logger(_today: date | None = None) -> Path:
+def setup_logger() -> None:
     log_format = "[%(asctime)s] %(levelname)-8s %(filename)s:%(funcName)s:%(lineno)s %(message)s"
     formatter = logging.Formatter(log_format, datefmt="%H:%M:%S")
 
-    root = logging.getLogger("DAMU")
-    root.setLevel(logging.DEBUG)
+    damu = logging.getLogger("DAMU")
+    damu.setLevel(logging.DEBUG)
 
-    formatter.converter = lambda *args: datetime.now(pytz.timezone("Asia/Almaty")).timetuple()
+    formatter.converter = lambda *args: datetime.now(
+        pytz.timezone("Asia/Almaty")
+    ).timetuple()
 
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.INFO)
     stream_handler.setFormatter(formatter)
 
-    log_folder = Path("logs")
+    log_folder = Path("logs/sverka")
     log_folder.mkdir(exist_ok=True)
+    logger_file = log_folder / "test_app.log"
 
-    if _today is None:
-        _today = datetime.now(pytz.timezone("Asia/Almaty")).date()
-
-    today_str = _today.strftime("%d.%m.%y")
-    year_month_folder = log_folder / today.strftime("%Y/%B")
-    year_month_folder.mkdir(parents=True, exist_ok=True)
-    logger_file = year_month_folder / f"{today_str}_test.log"
-
-    file_handler = logging.FileHandler(logger_file, encoding="utf-8")
+    file_handler = logging.FileHandler(logger_file, mode="w+", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
 
-    root.addHandler(stream_handler)
-    root.addHandler(file_handler)
-
-    return logger_file
+    damu.addHandler(stream_handler)
+    damu.addHandler(file_handler)
 
 
 today = datetime.now(pytz.timezone("Asia/Almaty")).date()
 os.environ["today"] = today.isoformat()
-setup_logger(today)
+setup_logger()
 
 logger = logging.getLogger("DAMU")
 
 
-def process_notification(db: DatabaseManager, edo: EDO, crm: CRM, registry: Registry, contract_id: str) -> str:
+def process_notification(
+    db: DatabaseManager,
+    edo: EDO,
+    crm: CRM,
+    registry: Registry,
+    contract_id: str,
+) -> str:
     logger.info(f"Trying to find a row for {contract_id=!r}")
 
     save_folder = edo.download_folder / contract_id
@@ -73,7 +76,9 @@ def process_notification(db: DatabaseManager, edo: EDO, crm: CRM, registry: Regi
     macros_folder = save_folder / "macros"
     macros_folder.mkdir(parents=True, exist_ok=True)
 
-    soup, basic_contract, _ = edo.get_basic_contract_data(contract_id=contract_id, db=db)
+    soup, basic_contract, _ = edo.get_basic_contract_data(
+        contract_id=contract_id, db=db
+    )
     if not basic_contract:
         reply = (
             "Не найден приложенный документ по данной ссылке - "
@@ -83,18 +88,29 @@ def process_notification(db: DatabaseManager, edo: EDO, crm: CRM, registry: Regi
 
     logger.info(f"{basic_contract.contract_type=!r}")
 
-    if basic_contract.contract_type in ["Дополнительное соглашение к договору субсидирования"]:
-        reply = f"Не поддерживаемый тип договора - {basic_contract.contract_type}"
+    if basic_contract.contract_type in [
+        "Дополнительное соглашение к договору субсидирования",
+        "Транш к договору присоединения",
+    ]:
+        reply = (
+            f"Не поддерживаемый тип договора - {basic_contract.contract_type}"
+        )
         return reply
 
     edo.download_file(contract_id=contract_id)
-    download_info = edo.get_signed_contract_url(contract_id=contract_id, soup=soup)
-    download_statuses = [edo.download_signed_contract(url, fpath) for url, fpath in download_info]
+    download_info = edo.get_signed_contract_url(
+        contract_id=contract_id, soup=soup
+    )
+    download_statuses = [
+        edo.download_signed_contract(url, fpath) for url, fpath in download_info
+    ]
     if not all(download_statuses):
         reply = "Не удалось скачать подписанный ЭЦП договор."
         return reply
 
-    safe_extract(save_folder / "contract.zip", documents_folder=documents_folder)
+    safe_extract(
+        save_folder / "contract.zip", documents_folder=documents_folder
+    )
 
     parse_contract = parse_document(
         contract_id=contract_id,
@@ -106,12 +122,13 @@ def process_notification(db: DatabaseManager, edo: EDO, crm: CRM, registry: Regi
         reply = f"{parse_contract.error.human_readable}\nНе удалось обработать договор."
         return reply
 
-    assert parse_contract.protocol_id
-    assert parse_contract.start_date
-    assert parse_contract.end_date
+    protocol_ids_str = cast(str, parse_contract.protocol_id)
+    protocol_ids = protocol_ids_str.split(";")
+    start_date = cast(date, parse_contract.start_date)
+    end_date = cast(date, parse_contract.end_date)
 
-    start_date_str = date_to_str(parse_contract.start_date)
-    end_date_str = date_to_str(parse_contract.end_date)
+    start_date_str = date_to_str(start_date)
+    end_date_str = date_to_str(end_date)
 
     assert start_date_str
     assert end_date_str
@@ -121,17 +138,21 @@ def process_notification(db: DatabaseManager, edo: EDO, crm: CRM, registry: Regi
             crm=crm,
             db=db,
             contract_id=contract_id,
-            protocol_id=parse_contract.protocol_id,
+            protocol_ids=protocol_ids,
             start_date=start_date_str,
             end_date=end_date_str,
             registry=registry,
+            dbz_id=parse_contract.dbz_id,
+            dbz_date=parse_contract.dbz_date,
         )
 
     if crm_contract.error.traceback:
         reply = f"{crm_contract.error.human_readable}\nНе удалось выгрузить данные из CRM."
         return reply
 
-    macro = process_macro(contract_id=contract_id, db=db, macros_folder=macros_folder)
+    macro = process_macro(
+        contract_id=contract_id, db=db, macros_folder=macros_folder
+    )
     macro.error.save(db)
     macro.save(db)
 
@@ -197,31 +218,42 @@ def main() -> None:
 
     logger.info('START of the process "Сверка договоров"')
 
-    delete_leftovers(registry.download_folder)
+    with DatabaseManager(registry.database) as db:
+        # contract_ids = os.listdir(
+        #     r"C:\Users\robot3\Desktop\damu\downloads\2025-06-23"
+        # )
+        # for contract_id in contract_ids:
+        #     reply = process_notification(
+        #         db=db,
+        #         edo=edo,
+        #         crm=crm,
+        #         registry=registry,
+        #         contract_id=contract_id,
+        #     )
+        #     logger.info(f"Reply: {reply}")
 
-    # with DatabaseManager(registry.database) as db:
-    #     # reply = process_notification(
-    #     #     db=db,
-    #     #     edo=edo,
-    #     #     crm=crm,
-    #     #     registry=registry,
-    #     #     contract_id="c4ad41f0-4c50-4c5c-8554-6814d36601cd",
-    #     # )
-    #     # logger.info(f"Reply: {reply}")
-    #
-    #     contract_ids = [row[0] for row in db.request("SELECT id FROM contracts", req_type=db.RequestType.FETCH_ALL)]
-    #     err_count = 0
-    #     for idx, contract_id in enumerate(contract_ids, start=1):
-    #         break
-    #         logger.info(f"Progress: {idx}/{len(contract_ids)}")
-    #
-    #         reply = process_notification(db=db, edo=edo, crm=crm, registry=registry, contract_id=contract_id)
-    #         logger.info(f"Reply: {reply}")
-    #
-    #         if reply != "Согласовано. Не найдено замечаний.":
-    #             err_count += 1
-    #
-    #     logger.info(f"err_count: {err_count}")
+        reply = process_notification(
+            db=db,
+            edo=edo,
+            crm=crm,
+            registry=registry,
+            contract_id="41493bf4-f007-4e56-9bf9-685111bf003a",
+        )
+        logger.info(f"Reply: {reply}")
+
+        # contract_ids = [row[0] for row in db.request("SELECT id FROM contracts", req_type=db.RequestType.FETCH_ALL)]
+        # err_count = 0
+        # for idx, contract_id in enumerate(contract_ids, start=1):
+        #     break
+        #     logger.info(f"Progress: {idx}/{len(contract_ids)}")
+        #
+        #     reply = process_notification(db=db, edo=edo, crm=crm, registry=registry, contract_id=contract_id)
+        #     logger.info(f"Reply: {reply}")
+        #
+        #     if reply != "Согласовано. Не найдено замечаний.":
+        #         err_count += 1
+        #
+        # logger.info(f"err_count: {err_count}")
 
 
 if __name__ == "__main__":

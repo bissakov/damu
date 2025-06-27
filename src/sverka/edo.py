@@ -151,14 +151,14 @@ class EDO(RequestHandler):
         return notifications
 
     def get_attached_document_url(
-        self, notification: EdoNotification
+        self, doctype_id: str, doc_id: str
     ) -> str | None:
         if not self.is_logged_in:
             self.login()
 
         response = self.request(
             method="get",
-            path=f"workflow/document/related-document/{notification.doctype_id}/{notification.doc_id}/v_516fba03",
+            path=f"workflow/document/related-document/{doctype_id}/{doc_id}/v_516fba03",
         )
         if not response:
             logger.error("Request failed")
@@ -220,6 +220,9 @@ class EDO(RequestHandler):
         return response_msg == "Выполнена задача: Исполнить"
 
     def mark_as_read(self, notif_id: str) -> bool:
+        if not notif_id:
+            return True
+
         data = {"items": notif_id, "is_read": "1"}
 
         response = self.request(method="post", path="lms/mark-as", data=data)
@@ -318,12 +321,12 @@ class EDO(RequestHandler):
                 row_idx += 1
                 continue
 
-            contragent = row["Заемщик"]
-            contragent_match = re.search(r"\d{12}", contragent)
-            if not contragent_match:
-                contragent = ""
-            else:
-                contragent = contragent_match.group(0)
+            # contragent = row["Заемщик"]
+            # contragent_match = re.search(r"\d{12}", contragent)
+            # if not contragent_match:
+            #     contragent = ""
+            # else:
+            #     contragent = contragent_match.group(0)
 
             ds_id = row["Рег.№"]
             ds_id = ds_id.strip().split(" ")[-1].replace("№", "")
@@ -336,7 +339,7 @@ class EDO(RequestHandler):
             contract = EdoContract(
                 contract_id=basic_contract.contract_id,
                 ds_id=ds_id,
-                contragent=contragent,
+                # contragent=contragent,
                 ds_date=ds_date,
                 sed_number=row["Порядковый номер"],
             )
@@ -420,6 +423,8 @@ class EDO(RequestHandler):
                 "Selector 'span.referenceView_f_7127e44' not found"
             )
 
+        contract_type = re.split(r"\s{3,}", contract_type)[0]
+
         contract_subject = (
             cast(str, tag.get("value"))
             if (tag := soup.select_one("input#js_f_9190289"))
@@ -473,15 +478,15 @@ class EDO(RequestHandler):
             value = re.sub(r" +", " ", value)
             page_data[key] = value
 
-        contragent = page_data.get("Заёмщики")
-        if not contragent:
-            contragent = ""
-        else:
-            contragent_match = re.search(r"\d{12}", contragent)
-            if not contragent_match:
-                contragent = ""
-            else:
-                contragent = contragent_match.group(0)
+        # contragent = page_data.get("Заёмщики")
+        # if not contragent:
+        #     contragent = ""
+        # else:
+        #     contragent_match = re.search(r"\d{12}", contragent)
+        #     if not contragent_match:
+        #         contragent = ""
+        #     else:
+        #         contragent = contragent_match.group(0)
 
         if not ds_date:
             try:
@@ -497,9 +502,10 @@ class EDO(RequestHandler):
         contract = EdoContract(
             contract_id=contract_id,
             ds_id=ds_id,
-            contragent=contragent,
+            # contragent=contragent,
             ds_date=ds_date,
             sed_number=sed_number,
+            contract_type=contract_type,
         )
         contract.save(db)
 

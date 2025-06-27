@@ -39,12 +39,16 @@ class DatabaseManager:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
 
-    def fetch_one(self, query: str, params: SqlParams = None) -> tuple[SqlDType, ...]:
+    def fetch_one(
+        self, query: str, params: SqlParams = None
+    ) -> tuple[SqlDType, ...]:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
             return cast(tuple[SqlDType, ...], cursor.fetchone())
 
-    def fetch_all(self, query: str, params: SqlParams = None) -> list[tuple[SqlDType, ...]]:
+    def fetch_all(
+        self, query: str, params: SqlParams = None
+    ) -> list[tuple[SqlDType, ...]]:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
             return cursor.fetchall()
@@ -54,17 +58,29 @@ class DatabaseManager:
 
     @overload
     def request(
-        self, query: str, params: SqlParams = None, *, req_type: Literal["execute"]
+        self,
+        query: str,
+        params: SqlParams = None,
+        *,
+        req_type: Literal["execute"],
     ) -> None: ...
 
     @overload
     def request(
-        self, query: str, params: SqlParams = None, *, req_type: Literal["fetch_one"]
+        self,
+        query: str,
+        params: SqlParams = None,
+        *,
+        req_type: Literal["fetch_one"],
     ) -> tuple[Any, ...]: ...
 
     @overload
     def request(
-        self, query: str, params: SqlParams = None, *, req_type: Literal["fetch_all"]
+        self,
+        query: str,
+        params: SqlParams = None,
+        *,
+        req_type: Literal["fetch_all"],
     ) -> list[tuple[Any, ...]]: ...
 
     def request(
@@ -96,6 +112,7 @@ class DatabaseManager:
                 file_name TEXT,
                 contragent TEXT NOT NULL,
                 sed_number TEXT,
+                contract_type TEXT,
                 protocol_id TEXT,
                 protocol_date TEXT,
                 decision_date TEXT,

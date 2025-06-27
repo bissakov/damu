@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import traceback
-from datetime import datetime, timedelta, date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Type, cast, override
@@ -10,7 +10,12 @@ from typing import Any, Type, cast, override
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
-from sverka.error import CRMNotFoundError, VypiskaDownloadError
+from sverka.error import (
+    CrmContragentNotFound,
+    CRMNotFoundError,
+    ProtocolDateNotInRangeError,
+    VypiskaDownloadError,
+)
 from sverka.structures import Registry
 from sverka.subsidy import Bank, CrmContract, Error, InterestRate
 from utils.db_manager import DatabaseManager
@@ -71,6 +76,13 @@ class Schemas:
             "parameter"
         ]["value"] = project_id
         return schema  # type: ignore
+
+    def contragent(self, contragent_id: str) -> dict[str, Any]:
+        schema = self.schemas["contragent"]
+        schema["filters"]["items"]["primaryColumnFilter"]["rightExpression"][
+            "parameter"
+        ]["value"] = contragent_id
+        return schema
 
 
 class CRM(RequestHandler):
@@ -308,6 +320,31 @@ class CRM(RequestHandler):
 
         return vypiska_row
 
+    def fetch_contragent_bin(self, contragent_id: str) -> str | None:
+        if not self.is_logged_in:
+            self.login()
+
+        json_data = self.schemas.contragent(contragent_id=contragent_id)
+        response = self.request(
+            method="post",
+            path="0/DataService/json/SyncReply/SelectQuery",
+            json=json_data,
+        )
+        if not response:
+            self.is_logged_in = False
+            return None
+
+        if not hasattr(response, "json"):
+            return None
+
+        data = response.json()
+        rows = data.get("rows")
+        assert isinstance(rows, list)
+
+        row = rows[0]
+        bin = row.get("BinInn")
+        return bin
+
     @override
     def __exit__(
         self,
@@ -413,10 +450,34 @@ def build_interest_rate(
     return ir
 
 
+def is_first_protocol_id_valid(crm: CRM, protocol_id: str) -> None:
+    row = crm.find_project(protocol_id=protocol_id)
+    if not row:
+        raise CRMNotFoundError(f"Protocol {protocol_id} not found...")
+    logger.info(f"CRM - SUCCESS - {protocol_id=}")
+
+    project_id: str = row["Id"]
+
+    project = crm.get_project_data(project_id=project_id)
+    if not project:
+        raise CRMNotFoundError(
+            f"Project {project_id} of protocol {protocol_id} not found..."
+        )
+    logger.info(f"CRM - SUCCESS - {project_id=}")
+
+    date_scoring = project.get("DateScoring") or ""
+    protocol_date = datetime.strptime(date_scoring, "%Y-%m-%dT%H:%M:%S.%f")
+
+    delta = (datetime.now() - protocol_date).days
+    logger.info(f"{delta=!r}")
+    if delta > 180:
+        raise ProtocolDateNotInRangeError()
+
+
 def fetch_crm_data_one(
     crm: CRM,
     contract_id: str,
-    protocol_id: str,
+    protocol_ids: list[str],
     start_date: str,
     end_date: str,
     db: DatabaseManager,
@@ -427,6 +488,8 @@ def fetch_crm_data_one(
     contract = CrmContract(
         contract_id=contract_id, error=Error(contract_id=contract_id)
     )
+
+    protocol_id = protocol_ids[-1]
 
     row = crm.find_project(protocol_id=protocol_id)
     if not row:
@@ -443,39 +506,40 @@ def fetch_crm_data_one(
         return contract
     logger.info(f"CRM - SUCCESS - {protocol_id=}")
 
-    contract.project_id = row.get("Id")
+    project_id: str = row["Id"]
+    bank_id: str = row.get("BvuLk", {})["value"]
+
+    contract.project_id = project_id
     contract.project = row.get("Project", {}).get("displayValue")
     contract.customer = row.get("Customer", {}).get("displayValue")
     contract.customer_id = row.get("Customer", {}).get("value")
-    contract.bank_id = row.get("BvuLk", {}).get("value")
+    contract.bank_id = bank_id
 
     assert contract.bank_id
 
     bank = Bank(
         contract_id=contract_id,
-        bank_id=contract.bank_id,
+        bank_id=bank_id,
         bank=row.get("BvuLk", {}).get("displayValue"),
         year_count=registry.banks.get(contract.bank_id),
     )
     bank.save(db)
 
-    assert contract.project_id
-
-    project = crm.get_project_data(contract.project_id)
+    project = crm.get_project_data(project_id)
     if not project:
         try:
             raise CRMNotFoundError(
-                f"Project {contract.project_id} of protocol {protocol_id} not found..."
+                f"Project {project_id} of protocol {protocol_id} not found..."
             )
         except CRMNotFoundError as err:
             logger.exception(err)
-            logger.error(f"CRM - ERROR - {contract.project_id=} - {err!r}")
+            logger.error(f"CRM - ERROR - {project_id=} - {err!r}")
             contract.error.traceback = f"{err!r}\n{traceback.format_exc()}"
             contract.error.human_readable = contract.error.get_human_readable()
         contract.error.save(db)
         contract.save(db)
         return contract
-    logger.info(f"CRM - SUCCESS - {contract.project_id=}")
+    logger.info(f"CRM - SUCCESS - {project_id=}")
 
     contract.subsid_amount = project.get("ProjectSubsidAmount") or 0.0
     contract.investment_amount = project.get("ForInvestment") or 0.0
@@ -502,20 +566,31 @@ def fetch_crm_data_one(
         contract.dbz_id = dbz_id
     if dbz_date:
         contract.dbz_date = dbz_date
-    agreement_data = crm.fetch_agreement_data(contract.project_id)
+
+    agreement_data = crm.fetch_agreement_data(project_id)
     if agreement_data:
         if not contract.dbz_id:
             contract.dbz_id = (agreement_data.get("NumberDBZ")).strip()
 
         if not contract.dbz_date:
-            dbz_date = agreement_data.get("DateDBZ") or ""
-            contract.dbz_date = pd.to_datetime(dbz_date)
+            contract.dbz_date = pd.to_datetime(
+                agreement_data.get("DateDBZ") or ""
+            )
+
+    contragent_id = (
+        project.get("Project.Account") or project.get("Customer")
+    ).get("value")
+    if not contragent_id:
+        raise CrmContragentNotFound()
+
+    contract.contragent = crm.fetch_contragent_bin(contragent_id)
+    logger.info(f"CRM - {contract.contragent=}")
 
     ir = build_interest_rate(contract_id, project, start_date, end_date)
     ir.save(db)
 
     vypiska_row = crm.download_vypiskas(
-        contract_id=contract_id, project_id=contract.project_id
+        contract_id=contract_id, project_id=project_id
     )
     if not vypiska_row:
         try:
