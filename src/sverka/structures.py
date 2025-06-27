@@ -63,7 +63,7 @@ RE_FILE_CONTENTS = re.compile(
 )
 RE_WRONG_CONTENTS = re.compile(r"дополнительное соглашение", re.IGNORECASE)
 RE_JOIN_CONTENTS = re.compile(r"договор\w? *присоединени\w", re.IGNORECASE)
-RE_PROTOCOL_ID = re.compile(r"№?.?(\d{6})")
+RE_PROTOCOL_ID = re.compile(r" №?\s*(\d{6}) ")
 RE_IBAN = re.compile(r"коды?:?.+?(KZ[0-9A-Z]{18})", re.IGNORECASE)
 RE_PRIMARY_COLUMN = re.compile(
     r"((дата *погашени\w+ *основно\w+ *долга)|(негізгі *борышты *өтеу))",
@@ -103,10 +103,11 @@ RE_JOIN_PROTOCOL_ID_RUS = re.compile(
     re.IGNORECASE,
 )
 RE_JOIN_PROTOCOL_ID_KAZ = re.compile(
-    r"қаржы ?агенттігінің ?уәкілетті ?органы ?шешімінің ?нөмірі ?және ?күні ?.*?(\d{5,})",
+    r"қаржы ?агенттігі\w* ?уәкілетті ?органы ?шешімінің ?нөмірі ?және ?күні ?.*?(\d{5,})",
     re.IGNORECASE,
 )
-RE_JOIN_LOAN_AMOUNT = re.compile(r"([\d., ]{6,})")
+# RE_JOIN_LOAN_AMOUNT = re.compile(r"([\d., ]{6,})")
+RE_JOIN_LOAN_AMOUNT = re.compile(r"([\d ]+,?\d+)")
 RE_JOIN_PROTOCOL_ID_OCR = re.compile(r"(\d{5,})", re.IGNORECASE)
 RE_JOIN_PDF_PATH = re.compile(
     r"заявление получателя к договору присоединения", re.IGNORECASE

@@ -3,13 +3,17 @@ import logging
 import os
 import sys
 import time
+import traceback
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import cast
 from urllib.parse import urljoin
 
 import dotenv
 import httpx
 import pytz
+
+from error import CRMNotFoundError, ProtocolDateNotInRangeError
 
 project_folder = Path(__file__).resolve().parent.parent.parent
 os.environ["project_folder"] = str(project_folder)
@@ -19,7 +23,7 @@ sys.path.append(str(project_folder / "sverka"))
 sys.path.append(str(project_folder / "utils"))
 sys.path.append(str(project_folder / "zanesenie"))
 
-from sverka.crm import CRM, fetch_crm_data_one
+from sverka.crm import CRM, fetch_crm_data_one, is_first_protocol_id_valid
 from sverka.edo import EDO, EdoNotification
 from sverka.macros import process_macro
 from sverka.parser import parse_document
@@ -169,9 +173,10 @@ def process_notification(
     edo: EDO,
     crm: CRM,
     registry: Registry,
-    notification: EdoNotification,
+    doctype_id: str,
+    doc_id: str,
 ) -> str:
-    document_url = edo.get_attached_document_url(notification)
+    document_url = edo.get_attached_document_url(doctype_id, doc_id)
     if not document_url:
         reply = "Не найден приложенный документ на странице поручения."
         return reply
@@ -199,7 +204,8 @@ def process_notification(
     logger.info(f"{basic_contract.contract_type=!r}")
 
     if basic_contract.contract_type in [
-        "Дополнительное соглашение к договору субсидирования"
+        "Дополнительное соглашение к договору субсидирования",
+        "Транш к договору присоединения",
     ]:
         reply = (
             f"Не поддерживаемый тип договора - {basic_contract.contract_type}"
@@ -231,38 +237,72 @@ def process_notification(
         reply = f"{parse_contract.error.human_readable}\nНе удалось обработать договор."
         return reply
 
-    assert parse_contract.protocol_id
-    assert parse_contract.start_date
-    assert parse_contract.end_date
+    protocol_ids_str = cast(str, parse_contract.protocol_id)
+    protocol_ids = protocol_ids_str.split(";")
+    start_date = cast(date, parse_contract.start_date)
+    end_date = cast(date, parse_contract.end_date)
+
+    start_date_str = date_to_str(start_date)
+    end_date_str = date_to_str(end_date)
+
+    assert start_date_str
+    assert end_date_str
 
     with crm:
+        response = crm.client.get(crm.base_url)
+        if response.is_error:
+            logger.error("CRM is not available")
+            return "CRM на данный момент не доступен"
+
         crm_contract = fetch_crm_data_one(
             crm=crm,
             db=db,
             contract_id=contract_id,
-            protocol_id=parse_contract.protocol_id,
-            start_date=date_to_str(parse_contract.start_date),
-            end_date=date_to_str(parse_contract.end_date),
+            protocol_ids=protocol_ids,
+            start_date=start_date_str,
+            end_date=end_date_str,
             registry=registry,
             dbz_id=parse_contract.dbz_id,
             dbz_date=parse_contract.dbz_date,
         )
 
-    if crm_contract.error and crm_contract.error.traceback:
-        reply = f"{crm_contract.error.human_readable}\nНе удалось выгрузить данные из CRM."
-        return reply
+        if crm_contract.error and crm_contract.error.traceback:
+            reply = crm_contract.error.human_readable
+            return reply
 
-    macro = process_macro(
-        contract_id=contract_id, db=db, macros_folder=macros_folder
-    )
-    macro.error.save(db)
-    macro.save(db)
+        macro = process_macro(
+            contract_id=contract_id, db=db, macros_folder=macros_folder
+        )
+        macro.error.save(db)
+        macro.save(db)
 
-    if macro.error and macro.error.traceback:
-        reply = f"Не согласовано. {macro.error.human_readable}"
-        logging.error(reply)
-        logging.error("Temporarily disabled")
-        # return reply
+        if macro.error and macro.error.traceback:
+            reply = f"Не согласовано. {macro.error.human_readable}"
+            logging.error(reply)
+            logging.error("Temporarily disabled")
+            # return reply
+
+        check_date = "Транш" not in basic_contract.contract_type
+        if check_date and len(protocol_ids) > 2:
+            try:
+                is_first_protocol_id_valid(crm=crm, protocol_id=protocol_ids[0])
+            except (CRMNotFoundError, ProtocolDateNotInRangeError) as err:
+                logger.exception(err)
+                logger.error(
+                    f"CRM - ERROR - {crm_contract.project_id=} - {err!r}"
+                )
+                crm_contract.error.traceback = (
+                    f"{err!r}\n{traceback.format_exc()}"
+                )
+                crm_contract.error.error = err
+                crm_contract.error.human_readable = (
+                    crm_contract.error.get_human_readable()
+                )
+                crm_contract.error.save(db)
+                crm_contract.save(db)
+
+                reply = crm_contract.error.human_readable
+                return reply
 
     reply = "Согласовано. Не найдено замечаний."
     return reply
@@ -300,8 +340,10 @@ def process_notifications(
                     edo=edo,
                     crm=crm,
                     registry=registry,
-                    notification=notification,
+                    doctype_id=notification.doctype_id,
+                    doc_id=notification.doc_id,
                 )
+
                 if "Неизвестная ошибка" in reply:
                     failed_notifications.add(notification.notif_id)
                     logger.error(reply)
@@ -313,6 +355,10 @@ def process_notifications(
                         f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
                     )
                     continue
+
+                if "CRM на данный момент не доступен" in reply:
+                    continue
+
                 reply_to_notification(
                     edo=edo, notification=notification, bot=bot, reply=reply
                 )

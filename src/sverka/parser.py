@@ -20,6 +20,7 @@ from sverka.error import (
     DateNotFoundError,
     EmptyTableError,
     ExcesssiveTableCountError,
+    FloatConversionError,
     InvalidColumnCount,
     JoinPDFNotFoundError,
     JoinProtocolNotFoundError,
@@ -283,8 +284,9 @@ class TableParser:
 
         return tables
 
-    def get_total_row_idx(self, df: pd.DataFrame) -> int:
-        keywords = {"итого", "жиыны", "барлығы", "жиынтығы", "қорытынды"}
+    @staticmethod
+    def get_total_row_idx(df: pd.DataFrame) -> int:
+        keywords = {"итого", "жиын", "барлығы", "жиынтығы", "қорытынды"}
         for idx in range(len(df) - 1, -1, -1):
             row = df.iloc[idx]
             for value in row:
@@ -294,10 +296,10 @@ class TableParser:
                     return idx
 
         col = df.columns[-1]
-        value = cast(str, df.loc[len(df) - 1, col])
+        value = cast(str, df.loc[len(df) - 1, col]) or ""
         if RE_FLOAT_NUMBER_FULL.search(value) is None:
             for idx in range(len(df) - 2, -1, -1):
-                value = cast(str, df.loc[idx, col])
+                value = cast(str, df.loc[idx, col]) or ""
                 if RE_FLOAT_NUMBER_FULL.search(value) is not None:
                     return idx
 
@@ -313,7 +315,7 @@ class TableParser:
             sum_regular_rows = df.loc[~is_total_row, column].sum()
             sum_total_row = df.loc[is_total_row, column].sum()
 
-            if sum_regular_rows != sum_total_row:
+            if abs(sum_regular_rows - sum_total_row) > 2:
                 human_readable_column = self.human_readable.get(column)
                 message = f"{human_readable_column!r}: {sum_regular_rows} не равно {sum_total_row}"
                 mismatches.append(message)
@@ -410,16 +412,21 @@ class TableParser:
             "total_accrued_fee_amount",
         ]
 
-        df[columns_to_process] = (
-            (
-                df[columns_to_process]
-                .replace({"-": "0", "": "0", "[  ]+": "", ",": "."}, regex=True)
-                .astype(float)
-                * 100
+        try:
+            df[columns_to_process] = (
+                (
+                    df[columns_to_process]
+                    .replace(
+                        {"-": "0", "": "0", "[  ]+": "", ",": "."}, regex=True
+                    )
+                    .astype(float)
+                    * 100
+                )
+                .round()
+                .astype("Int64")
             )
-            .round()
-            .astype("Int64")
-        )
+        except ValueError as err:
+            raise FloatConversionError() from ValueError
 
         # df = df.where(pd.notna(df), None)
         df.reset_index(inplace=True, drop=True)
@@ -513,6 +520,49 @@ class Parser:
         ibans = RE_IBAN.findall(self.document.docx_content.text)
         return ibans
 
+    def find_subsidy_loan_amount(self) -> float | None:
+        for table in self.document.doc.tables:
+            parsed_table = self.table_parser.parse_table(
+                table, filter_empty=True
+            )
+            row_count = len(parsed_table)
+            if not (
+                7 <= row_count <= 9
+                and sum(1 for row in parsed_table if len(row) == 2)
+                > row_count // 2
+            ):
+                continue
+
+            row_idx = index(
+                parsed_table,
+                condition=lambda row: (text := row[0])
+                and (text.startswith("Сумма") or "сома" in text),
+                default=3,
+            )
+
+            logger.info(f"{parsed_table[row_idx][0]=!r}")
+            logger.info(f"{parsed_table[row_idx][1]=!r}")
+
+            amount_str = parsed_table[row_idx][1]
+            logger.debug(f"{amount_str=!r}")
+            match = RE_FLOAT_NUMBER.search(amount_str)
+            if not match:
+                continue
+
+            match_str = match.group(1)
+            match_str = (
+                match_str.replace(" ", "").replace(",", ".").replace(" ", "")
+            )
+            amount = float(match_str)
+            return amount
+
+
+class SubsidyParser(Parser):
+    def __init__(
+        self, document: SubsidyDocument, contract: ParseSubsidyContract
+    ) -> None:
+        super().__init__(document=document, contract=contract)
+
     def find_dbz(self) -> tuple[str | None, date | None]:
         dbz_data = None
         for table in self.document.doc.tables:
@@ -553,6 +603,7 @@ class Parser:
             r"Договор\s+лизинга[№ ]+([^ ]+)\s+от\s+(\d+.\d+.\d+)",
             r"Договор\s+финансового\s+лизинга[№ ]+([^ ]+)\s+от\s+(\d+.\d+.\d+)",
             r"Заявление\s+[№ ]+([^ ]+)\s*от\s*(\d+.\d+.\d+)",
+            r"График\s*погашения\s*кредита\s*[№ ]+([^ ]+)\s*от\s*(\d+.\d+.\d+)",
         ]
 
         hard_exprs = [
@@ -600,44 +651,6 @@ class Parser:
 
         return dbz_id, dbz_date
 
-    def find_subsidy_loan_amount(self) -> float | None:
-        for table in self.document.doc.tables:
-            parsed_table = self.table_parser.parse_table(
-                table, filter_empty=True
-            )
-            row_count = len(parsed_table)
-            if not (
-                7 <= row_count <= 9
-                and sum(1 for row in parsed_table if len(row) == 2)
-                > row_count // 2
-            ):
-                continue
-
-            row_idx = index(
-                parsed_table,
-                condition=lambda row: row[0].startswith("Сумма"),
-                default=3,
-            )
-
-            amount_str = parsed_table[row_idx][1]
-            match = RE_FLOAT_NUMBER.search(amount_str)
-            if not match:
-                continue
-
-            match_str = match.group(1)
-            match_str = (
-                match_str.replace(" ", "").replace(",", ".").replace(" ", "")
-            )
-            amount = float(match_str)
-            return amount
-
-
-class SubsidyParser(Parser):
-    def __init__(
-        self, document: SubsidyDocument, contract: ParseSubsidyContract
-    ) -> None:
-        super().__init__(document=document, contract=contract)
-
     def find_subsidy_date(self, pat: re.Pattern) -> date | None:
         para = find(
             self.document.paragraphs,
@@ -683,9 +696,41 @@ class SubsidyParser(Parser):
         )
 
         if not isinstance(date_str, str):
-            raise DateNotFoundError(
-                self.document.file_path.name, self.contract.contract_id, para
+            para = next(
+                (
+                    p
+                    for p in self.document.paragraphs[::-1]
+                    if pat.search(p) is not None and len(p) >= 30
+                )
             )
+
+            para = (
+                para.replace('"', " ")
+                .replace("«", " ")
+                .replace("»", " ")
+                .replace(" .", ".")
+                .replace("-ін", " ін")
+                .replace("г.", " г.")
+                .replace("ж.", " ж.")
+                .replace("года", " года")
+                .replace("жыл", " жыл")
+            )
+
+            for month in MONTHS.keys():
+                para = para.replace(month, f" {month}")
+
+            date_str = (
+                match.group(1)
+                if (match := RE_COMPLEX_DATE.search(para))
+                else None
+            )
+
+            if not isinstance(date_str, str):
+                raise DateNotFoundError(
+                    self.document.file_path.name,
+                    self.contract.contract_id,
+                    para,
+                )
 
         date_str = date_str.replace("-", ".").replace("/", ".")
 
@@ -741,25 +786,19 @@ class SubsidyParser(Parser):
             raise err
 
     def find_subsidy_protocol_id(self) -> str | None:
+        paragraphs = self.document.paragraphs
         termin_para_idx = index(
-            self.document.paragraphs,
-            condition=lambda p: "ермин" in p,
-            default=-1,
+            paragraphs, condition=lambda p: "ермин" in p, default=-1
         )
 
         if termin_para_idx != -1:
-            text = [
-                x
-                for x in "".join(
-                    self.document.paragraphs[:termin_para_idx]
-                ).split(";")
-                if x
-            ][-1]
+            text = "".join(paragraphs[:termin_para_idx])
 
-            protocol_ids = RE_PROTOCOL_ID.findall(text)
+            protocol_ids = list(RE_PROTOCOL_ID.findall(text))
             if not protocol_ids:
                 raise ProtocolIDNotFoundError("Протокол не найден")
-            return protocol_ids[-1]
+            protocol_ids_str = ";".join(protocol_ids)
+            return protocol_ids_str
 
         if not self.document.docx_content:
             self.document.docx_content = open_document(
@@ -768,18 +807,22 @@ class SubsidyParser(Parser):
 
         full_text = self.document.docx_content.text
         termin_idx = full_text.find("ермин")
-        protocol_ids = RE_PROTOCOL_ID.findall(full_text[:termin_idx])
+        text = full_text[:termin_idx]
+        protocol_ids = RE_PROTOCOL_ID.findall(text)
         if not protocol_ids:
             raise ProtocolIDNotFoundError("Протокол не найден")
-        return protocol_ids[-1]
+        protocol_ids_str = ";".join(protocol_ids)
+        return protocol_ids_str
 
     def parse_document(self) -> list[pd.DataFrame]:
         self.contract.file_name = self.document.file_path.name
+        logger.info(f"PARSE - file_name={self.contract.file_name!r}")
 
         self.contract.protocol_id = self.find_subsidy_protocol_id()
         if not self.contract.protocol_id:
-            logger.error("PARSE - WARNING - protocols not found")
-            raise ValueError("Protocol IDs not found...")
+            logger.error("PARSE - WARNING - protocol_id=None")
+        else:
+            logger.info(f"PARSE - protocol_id={self.contract.protocol_id!r}")
 
         ibans = self.find_ibans()
         if len(set(ibans)) > 1:
@@ -843,6 +886,54 @@ class JoinParser(Parser):
     ) -> None:
         super().__init__(document=document, contract=contract)
 
+    def find_dbz(self) -> tuple[str | None, date | None]:
+        table = self.table_parser.parse_table(self.document.doc.tables[0])
+
+        dbz_id_pat_rus = re.compile(
+            r"Договор\s*банковского\s*займа[№ ]+([^ ]+)", re.IGNORECASE
+        )
+        dbz_pat_kaz = re.compile(
+            r"[№ ]+([^ ]+)\s*Банк\w*\s*қарыз\s*шарты", re.IGNORECASE
+        )
+
+        dbz_date_pat = re.compile(r"(\d+\.\d+\.\d+)", re.IGNORECASE)
+
+        dbz_id_match = next(
+            (
+                m
+                for row in table
+                if (
+                    m := (
+                        dbz_id_pat_rus.search(row[1])
+                        or dbz_pat_kaz.search(row[1])
+                    )
+                )
+                is not None
+            ),
+            None,
+        )
+        dbz_id = dbz_id_match.group(1) if dbz_id_match is not None else None
+
+        dbz_date_match = next(
+            (
+                m
+                for row in table
+                if (m := dbz_date_pat.search(row[1])) is not None
+            ),
+            None,
+        )
+        dbz_date_str = (
+            dbz_date_match.group(1) if dbz_date_match is not None else None
+        )
+
+        fmt = "%d.%m.%y" if len(dbz_date_str) == 8 else "%d.%m.%Y"
+        try:
+            dbz_date = datetime.strptime(dbz_date_str, fmt).date()
+        except ValueError:
+            dbz_date = datetime.strptime(dbz_date_str, "%d/%m/%Y").date()
+
+        return dbz_id, dbz_date
+
     def find_join_protocol_id_loan_amount(self) -> tuple[str, float]:
         from pypdf import PdfReader
 
@@ -903,7 +994,7 @@ class JoinParser(Parser):
                         match_str.replace(" ", "").replace(",", ".")
                     )
 
-        if not protocol_id:
+        if not protocol_id or not loan_amount:
             temp_folder = Path("C:/Temp") / self.contract.contract_id
             temp_folder.mkdir(exist_ok=True, parents=True)
 
@@ -923,36 +1014,35 @@ class JoinParser(Parser):
                     if protocol_id and loan_amount:
                         break
 
-                    line = line.strip().lower()
-                    if (
-                        "номер и дата решения" in line
-                        and (match := RE_JOIN_PROTOCOL_ID_OCR.search(line))
-                        is not None
-                    ):
-                        protocol_id = match.group(1)
+                    if not protocol_id:
+                        line = line.strip().lower()
+                        if (
+                            "номер и дата решения" in line
+                            and (match := RE_JOIN_PROTOCOL_ID_OCR.search(line))
+                            is not None
+                        ):
+                            protocol_id = match.group(1)
 
-                    if loan_amount:
-                        continue
-
-                    search1, search2 = -1, -1
-                    if (search1 := line.find("умма кредита")) or (
-                        search2 := line.find("редит/лизинг сомасы")
-                    ):
-                        if search1 != -1 and search2 == -1:
-                            search_idx = search1
-                        elif search2 != -1 and search1 == -1:
-                            search_idx = search2
-                        else:
-                            continue
-                        snippet = line[search_idx : search_idx + 100]
-                        match = RE_JOIN_LOAN_AMOUNT.search(snippet)
-                        if match:
-                            loan_amount = float(
-                                match.group(1)
-                                .strip()
-                                .replace(" ", "")
-                                .replace(",", ".")
-                            )
+                    if not loan_amount:
+                        search1, search2 = -1, -1
+                        if (search1 := line.find("умма кредита")) or (
+                            search2 := line.find("редит/лизинг сомасы")
+                        ):
+                            if search1 != -1 and search2 == -1:
+                                search_idx = search1
+                            elif search2 != -1 and search1 == -1:
+                                search_idx = search2
+                            else:
+                                continue
+                            snippet = line[search_idx : search_idx + 100]
+                            match = RE_JOIN_LOAN_AMOUNT.search(snippet)
+                            if match:
+                                loan_amount = float(
+                                    match.group(1)
+                                    .strip()
+                                    .replace(" ", "")
+                                    .replace(",", ".")
+                                )
 
             if not protocol_id:
                 raise JoinProtocolNotFoundError(
@@ -988,6 +1078,7 @@ class JoinParser(Parser):
 
     def parse_document(self) -> list[pd.DataFrame]:
         self.contract.file_name = self.document.file_path.name
+        logger.info(f"PARSE - file_name={self.contract.file_name!r}")
 
         self.contract.protocol_id, self.contract.loan_amount = (
             self.find_join_protocol_id_loan_amount()

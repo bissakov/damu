@@ -274,6 +274,10 @@ def shift_workbook(
         ]
     ]
 
+    if pd.isna(df.loc[0, "agency_fee_amount"]):
+        df = df.iloc[1:]
+        df = df.reset_index(drop=True)
+
     df["agency_fee_amount"] = (df["agency_fee_amount"] / 100).astype(float)
     df["recipient_fee_amount"] = (df["recipient_fee_amount"] / 100).astype(
         float
