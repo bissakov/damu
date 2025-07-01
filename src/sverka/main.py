@@ -13,8 +13,6 @@ import dotenv
 import httpx
 import pytz
 
-from error import CRMNotFoundError, ProtocolDateNotInRangeError
-
 project_folder = Path(__file__).resolve().parent.parent.parent
 os.environ["project_folder"] = str(project_folder)
 os.chdir(project_folder)
@@ -24,7 +22,8 @@ sys.path.append(str(project_folder / "utils"))
 sys.path.append(str(project_folder / "zanesenie"))
 
 from sverka.crm import CRM, fetch_crm_data_one, is_first_protocol_id_valid
-from sverka.edo import EDO, EdoNotification
+from sverka.edo import EDO, Task
+from sverka.error import CRMNotFoundError, ProtocolDateNotInRangeError
 from sverka.macros import process_macro
 from sverka.parser import parse_document
 from sverka.structures import Registry
@@ -151,7 +150,7 @@ class TelegramAPI:
 
 
 def reply_to_notification(
-    edo: EDO, notification: EdoNotification, bot: TelegramAPI, reply: str
+    edo: EDO, task: Task, bot: TelegramAPI, reply: str
 ) -> None:
     reply = inspect.cleandoc(reply)
     logger.info(f"Notification reply - {reply!r}")
@@ -159,13 +158,12 @@ def reply_to_notification(
     if "Неизвестная ошибка" in reply:
         return
 
-    bot.send_message(f"{notification.notif_id}:\n{reply}")
+    bot.send_message(f"{task.doc_id}:\n{reply}")
 
     # if reply != "Согласовано. Не найдено замечаний.":
     #     return
 
-    edo.reply_to_notification(notification=notification, reply=reply)
-    edo.mark_as_read(notif_id=notification.notif_id)
+    edo.reply_to_notification(task=task, reply=reply)
 
 
 def process_notification(
@@ -271,7 +269,10 @@ def process_notification(
             return reply
 
         macro = process_macro(
-            contract_id=contract_id, db=db, macros_folder=macros_folder
+            contract_id=contract_id,
+            db=db,
+            macros_folder=macros_folder,
+            documents_folder=documents_folder,
         )
         macro.error.save(db)
         macro.save(db)
@@ -309,7 +310,7 @@ def process_notification(
 
 
 # FIXME
-failed_notifications: set[str] = set()
+failed_tasks: set[str] = set()
 
 
 def process_notifications(
@@ -320,59 +321,57 @@ def process_notifications(
     bot: TelegramAPI,
 ) -> int:
     with edo:
-        notifications = edo.get_notifications()
+        tasks = edo.get_tasks()
 
-        logger.info(f"Found {len(notifications)} notifications")
-        if not notifications:
+        logger.info(f"Found {len(tasks)} notifications")
+        if not tasks:
             logger.info("Nothing to work on - sleeping...")
             return 150
         else:
-            bot.send_message(f"Found {len(notifications)} notifications")
+            bot.send_message(f"Found {len(tasks)} notifications")
 
-        for notification in notifications:
-            if notification.notif_id in failed_notifications:
+        for task in tasks:
+            if task.doc_id in failed_tasks:
                 continue
 
-            logger.info(f"Working on notification {notification.notif_id}")
+            logger.info(f"Working on task {task}")
             try:
                 reply = process_notification(
                     db=db,
                     edo=edo,
                     crm=crm,
                     registry=registry,
-                    doctype_id=notification.doctype_id,
-                    doc_id=notification.doc_id,
+                    doctype_id=task.doctype_id,
+                    doc_id=task.doc_id,
                 )
 
                 if "Неизвестная ошибка" in reply:
-                    failed_notifications.add(notification.notif_id)
+                    failed_tasks.add(task.doc_id)
                     logger.error(reply)
                     tg_dev_name = os.environ["TG_DEV_NAME"]
                     bot.send_message(
-                        f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                        f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(tasks)}."
                     )
                     logger.error(
-                        f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                        f"Поймана ошибка - кол-во неизвестных {len(tasks)}."
                     )
                     continue
 
                 if "CRM на данный момент не доступен" in reply:
                     continue
 
-                reply_to_notification(
-                    edo=edo, notification=notification, bot=bot, reply=reply
-                )
+                reply_to_notification(edo=edo, task=task, bot=bot, reply=reply)
             except Exception as err:
                 logging.exception(err)
                 logging.error(f"{err!r}")
                 bot.send_message(f"{err!r}")
-                failed_notifications.add(notification.notif_id)
+                failed_tasks.add(task.doc_id)
                 logger.error(
-                    f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                    f"Поймана ошибка - кол-во неизвестных {len(failed_tasks)}."
                 )
                 continue
 
-    if failed_notifications:
+    if failed_tasks:
         return 150
     else:
         return 0

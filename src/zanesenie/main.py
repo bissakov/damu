@@ -32,7 +32,7 @@ os.chdir(str(project_folder))
 
 
 from sverka.crm import CRM
-from sverka.edo import EDO, EdoNotification
+from sverka.edo import EDO, Task
 from sverka.process_contract import process_contract
 from sverka.structures import Registry
 from utils._automation import (
@@ -175,18 +175,17 @@ class TelegramAPI:
 
 
 def reply_to_notification(
-    edo: EDO, notification: EdoNotification, bot: TelegramAPI, reply: str
+    edo: EDO, task: Task, bot: TelegramAPI, reply: str
 ) -> None:
     reply = inspect.cleandoc(reply)
     logger.info(f"Notification reply - {reply!r}")
 
-    bot.send_message(f"{notification.notif_id}:\n{reply}")
+    bot.send_message(f"{task.doc_id}:\n{reply}")
 
     # if reply != "Согласовано. Не найдено замечаний.":
     #     return
 
-    edo.reply_to_notification(notification=notification, reply=reply)
-    edo.mark_as_read(notif_id=notification.notif_id)
+    edo.reply_to_notification(task=task, reply=reply)
 
 
 def prepare_query(contragent: str, protocol_id: str) -> str:
@@ -237,7 +236,7 @@ class Contract:
     protocol_id: str
     sed_number: str
     document_path: Path
-    macro_path: bytes | Path
+    macro_path: Path
     document_pdf_path: Path | None = None
     protocol_pdf_path: Path | None = None
     category: str | None = None
@@ -731,34 +730,7 @@ def add_vypiska(
     Прикрепление файла выписки из CRM во вкладке "Прикрепленные документы"
     """
 
-    protocol_pdf_path = cast(Path, contract.protocol_pdf_path)
-    fname = protocol_pdf_path.name
-
     click(win, child(form, title="Прикрепленные документы", ctrl="TabItem"))
-
-    # click(
-    #     win,
-    #     child(form, ctrl="Button", title="Set list filter and sort options..."),
-    # )
-    #
-    # sort_win = window(one_c.app, title="Filter and Sort")
-    #
-    # check(child(sort_win, title="Наименование файла", ctrl="CheckBox"))
-    #
-    # click_type(
-    #     win,
-    #     child(sort_win, ctrl="Edit", idx=7),
-    #     fname,
-    #     spaces=True,
-    #     escape_chars=True,
-    # )
-    #
-    # click(win, child(sort_win, title="OK", ctrl="Button"))
-    #
-    # sleep(1)
-    #
-    # if contains_text(child(form, ctrl="Table")):
-    #     return
 
     click(win, child(form, title="Add", ctrl="Button"))
     click(win, child(win, ctrl="Edit", idx=5))
@@ -1319,23 +1291,17 @@ def fill_1c(
 
 
 def process_notification(
-    db: DatabaseManager,
-    edo: EDO,
-    crm: CRM,
-    registry: Registry,
-    notification: EdoNotification,
+    db: DatabaseManager, edo: EDO, crm: CRM, registry: Registry, task: Task
 ) -> str:
-    document_url = edo.get_attached_document_url(
-        notification.doctype_id, notification.doc_id
-    )
+    document_url = edo.get_attached_document_url(task.doctype_id, task.doc_id)
     if not document_url:
         reply = "Не найден приложенный документ на странице поручения."
         return reply
 
     contract_id = document_url.split("/")[-1]
 
-    # if contract_id in ["24e78ed3-c73b-48a6-bb0c-68496b1602b8"]:
-    #     return "Неизвестная ошибка"
+    if contract_id in ["587e98a2-cb98-4c1b-9304-685b846e025b"]:
+        return "Неизвестная ошибка"
 
     reply = process_contract(
         logger=logger,
@@ -1365,7 +1331,7 @@ def process_notification(
 
 
 # FIXME
-failed_notifications: set[str] = set()
+failed_tasks: set[str] = set()
 
 
 def process_notifications(
@@ -1376,65 +1342,55 @@ def process_notifications(
     bot: TelegramAPI,
 ) -> int:
     with edo:
-        notifications = edo.get_notifications()
+        tasks = edo.get_tasks()
 
-        logger.info(f"{notifications=!r}")
+        logger.info(f"{tasks=!r}")
 
-        logger.info(f"Found {len(notifications)} notifications")
-        if not notifications:
+        logger.info(f"Found {len(tasks)} tasks")
+        if not tasks:
             logger.info("Nothing to work on - sleeping...")
             return 150
         else:
-            bot.send_message(f"Found {len(notifications)} notifications")
+            bot.send_message(f"Found {len(tasks)} tasks")
 
-        for notification in notifications:
-            if "Карты КПД" in notification.subject:
-                edo.mark_as_read(notif_id=notification.notif_id)
+        for task in tasks:
+            if task.doc_id in failed_tasks:
                 continue
 
-            if notification.notif_id in failed_notifications:
-                continue
-
-            logger.info(f"Working on notification {notification.notif_id}")
+            logger.info(f"Working on task {task}")
             try:
                 reply = process_notification(
-                    db=db,
-                    edo=edo,
-                    crm=crm,
-                    registry=registry,
-                    notification=notification,
+                    db=db, edo=edo, crm=crm, registry=registry, task=task
                 )
 
                 if "Неизвестная ошибка" in reply:
-                    failed_notifications.add(notification.notif_id)
+                    failed_tasks.add(task.doc_id)
                     logger.error(reply)
                     tg_dev_name = os.environ["TG_DEV_NAME"]
                     bot.send_message(
-                        f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                        f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(failed_tasks)}."
                     )
                     logger.error(
-                        f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                        f"Поймана ошибка - кол-во неизвестных {len(failed_tasks)}."
                     )
                     continue
 
                 if "CRM на данный момент не доступен" in reply:
                     continue
 
-                reply_to_notification(
-                    edo=edo, notification=notification, bot=bot, reply=reply
-                )
+                reply_to_notification(edo=edo, task=task, bot=bot, reply=reply)
             except Exception as err:
                 logging.exception(err)
                 logging.error(f"{err!r}")
                 bot.send_message(f"{err!r}")
-                failed_notifications.add(notification.notif_id)
+                failed_tasks.add(task.doc_id)
 
                 logger.error(
-                    f"Поймана ошибка - кол-во неизвестных {len(failed_notifications)}."
+                    f"Поймана ошибка - кол-во неизвестных {len(failed_tasks)}."
                 )
                 continue
 
-    if failed_notifications:
+    if failed_tasks:
         return 150
     else:
         return 0

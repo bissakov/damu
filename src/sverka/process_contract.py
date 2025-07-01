@@ -120,7 +120,9 @@ def process_contract(
             contract_id=contract_id,
             db=db,
             macros_folder=macros_folder,
+            documents_folder=documents_folder,
             raise_exc=False,
+            skip_pretty_macro=True,
         )
         macro.error.save(db)
         macro.save(db)

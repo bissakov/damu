@@ -31,6 +31,12 @@ class EdoNotification:
 
 
 @dataclasses.dataclass
+class Task:
+    doctype_id: str
+    doc_id: str
+
+
+@dataclasses.dataclass
 class EdoBasicContract:
     contract_id: str
     contract_type: str
@@ -120,6 +126,47 @@ class EDO(RequestHandler):
 
         self.is_logged_in = True
 
+    def get_tasks(self) -> list[Task]:
+        if not self.is_logged_in:
+            self.login()
+
+        params = {"pp": "empty"}
+        response = self.request(
+            method="get",
+            path="/workflow/index/00000000-0000-0000-0000-000000000011/aade4fc1-d676-428b-91e3-53c0fa1f025b",
+            params=params,
+        )
+        if not response:
+            logger.error("Request failed")
+            raise LoginError("Robot was unable to login into the EDO...")
+
+        if not hasattr(response, "json"):
+            logger.error("Request failed")
+            raise LoginError("Robot was unable to login into the EDO...")
+
+        soup = BeautifulSoup(
+            response.text,
+            features="lxml",
+            parse_only=SoupStrainer("div", {"id": "content"}),
+        )
+
+        tasks: list[Task] = []
+        for anchor in soup.select("a"):
+            href = anchor.get("href")
+            if not href:
+                continue
+
+            if "/media" in href or href == "#":
+                continue
+
+            parts = (
+                (href or "").replace("?mydocuments", "").rsplit("/", maxsplit=2)
+            )
+            task = Task(doctype_id=parts[-2], doc_id=parts[-1])
+            if task not in tasks:
+                tasks.append(task)
+        return tasks
+
     def get_notifications(self) -> list[EdoNotification]:
         if not self.is_logged_in:
             self.login()
@@ -184,16 +231,14 @@ class EDO(RequestHandler):
         logger.info(f"Document URL - {document_url!r}")
         return document_url
 
-    def reply_to_notification(
-        self, notification: EdoNotification, reply: str
-    ) -> bool:
+    def reply_to_notification(self, task: Task, reply: str) -> bool:
         if not self.is_logged_in:
             self.login()
 
         reply = reply.strip()
 
         data = {
-            "msf_id": f"workflow:{notification.doctype_id}:{notification.doc_id}",
+            "msf_id": f"workflow:{task.doctype_id}:{task.doc_id}",
             "tstamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "comment": reply,
             "files[0]": "",
@@ -202,7 +247,7 @@ class EDO(RequestHandler):
 
         response = self.request(
             method="post",
-            path=f"workflow/document/decision/{notification.doctype_id}/{notification.doc_id}/t_51945d1?mydocuments&",
+            path=f"workflow/document/decision/{task.doctype_id}/{task.doc_id}/t_51945d1?mydocuments&",
             data=data,
         )
         if not response:
@@ -219,11 +264,11 @@ class EDO(RequestHandler):
         response_msg = cast(str, response_data.get("message", "").strip())
         return response_msg == "Выполнена задача: Исполнить"
 
-    def mark_as_read(self, notif_id: str) -> bool:
-        if not notif_id:
+    def mark_as_read(self, task_id: str) -> bool:
+        if not task_id:
             return True
 
-        data = {"items": notif_id, "is_read": "1"}
+        data = {"items": task_id, "is_read": "1"}
 
         response = self.request(method="post", path="lms/mark-as", data=data)
         if not response:
@@ -530,7 +575,7 @@ class EDO(RequestHandler):
             soup = BeautifulSoup(
                 response.text,
                 features="lxml",
-                parse_only=SoupStrainer("div", {"id": "tabcontent1"}),
+                parse_only=SoupStrainer("ul", {"id": "recent_documents"}),
             )
 
         download_folder = self.download_folder / contract_id / "documents"
