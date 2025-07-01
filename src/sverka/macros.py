@@ -203,9 +203,7 @@ def format_style_save(original_df: pd.DataFrame) -> openpyxl.Workbook:
         header_cell.alignment = header_alignment
         header_cell.font = header_font
 
-        header_name = header_cell.value
-
-        match header_name:
+        match header_cell.value:
             case "Дата погашения основного долга":
                 cell_format = "DD.MM.YYYY"
             case "Ставка вознаграждения":
@@ -256,7 +254,11 @@ def format_style_save(original_df: pd.DataFrame) -> openpyxl.Workbook:
 
 
 def shift_workbook(
-    source_df: pd.DataFrame, rows: int, cols: int
+    source_df: pd.DataFrame,
+    contract: SubsidyContract,
+    rows: int,
+    cols: int,
+    documents_folder: Path,
 ) -> openpyxl.Workbook:
     if "total" in source_df:
         df: pd.DataFrame = source_df.loc[~source_df["total"]].copy()
@@ -274,9 +276,26 @@ def shift_workbook(
         ]
     ]
 
-    if pd.isna(df.loc[0, "agency_fee_amount"]):
+    df = df[
+        (contract.start_date <= df["debt_repayment_date"])
+        & (contract.end_date >= df["debt_repayment_date"])
+    ]
+
+    if df.at[len(df) - 1, "principal_debt_balance"] == 0:
+        df["principal_debt_balance"] = df["principal_debt_balance"].shift(1)
+        df.loc[0, "principal_debt_balance"] = int(contract.loan_amount * 100)
+
+    if df.at[0, "agency_fee_amount"] == 0:
+        # first_principal_debt_balance = df.loc[0, "principal_debt_balance"]
+        # if (
+        #     pd.isna(first_principal_debt_balance)
+        #     or first_principal_debt_balance == 0
+        # ):
         df = df.iloc[1:]
         df = df.reset_index(drop=True)
+
+    # df = df[df["agency_fee_amount"] != 0].copy()
+    # df = df.reset_index(drop=True)
 
     df["agency_fee_amount"] = (df["agency_fee_amount"] / 100).astype(float)
     df["recipient_fee_amount"] = (df["recipient_fee_amount"] / 100).astype(
@@ -288,8 +307,6 @@ def shift_workbook(
     df["principal_debt_balance"] = (df["principal_debt_balance"] / 100).astype(
         float
     )
-
-    df["principal_debt_balance"] = df["principal_debt_balance"].shift(1)
 
     df["debt_repayment_date"] = pd.to_datetime(
         df["debt_repayment_date"]
@@ -326,6 +343,8 @@ def shift_workbook(
     range_to_move = f"A1:{last_cell}"
 
     ws.move_range(range_to_move, rows=rows, cols=cols)
+
+    wb.save(documents_folder / "macro.xlsx")
 
     return wb
 
@@ -444,6 +463,7 @@ def create_macro(
     calc_subsidy_sum: Callable[[pd.DataFrame], pd.DataFrame],
     calc_principal_balance_check: Callable[[pd.DataFrame], pd.DataFrame],
     calc_day_count: Callable[[pd.Series], pd.Series],
+    documents_folder: Path,
 ) -> MacroContents:
     # summary_df = contract.df.loc[contract.df["total"]].copy()
     df = contract.df.loc[~contract.df["total"]].copy()
@@ -586,7 +606,13 @@ def create_macro(
     workbook = format_style_save(combined_df)
     workbook.save(file_path)
 
-    shifted_workbook = shift_workbook(source_df=df, rows=9, cols=1)
+    shifted_workbook = shift_workbook(
+        source_df=contract.df,
+        contract=contract,
+        rows=9,
+        cols=1,
+        documents_folder=documents_folder,
+    )
 
     macro_bytes = wb_to_bytes(workbook)
     shifted_bytes = wb_to_bytes(shifted_workbook)
@@ -622,7 +648,8 @@ def retry_create_macro(result: Result, raise_exc: bool = True) -> MacroContents:
                     break
             else:
                 debt_repayment_date = datetime.strftime(
-                    df.loc[idx, "debt_repayment_date"], "%d.%m.%Y"
+                    cast(datetime, df.at[idx, "debt_repayment_date"]),
+                    "%d.%m.%Y",
                 )
                 bank_excel_diff = round(df.loc[idx, "bank_excel_diff"] / 100, 2)
                 human_readable += f"'Разница между расчетом Банка и Excel' на {debt_repayment_date} равна {bank_excel_diff}\n"
@@ -642,7 +669,13 @@ def retry_create_macro(result: Result, raise_exc: bool = True) -> MacroContents:
     workbook = format_style_save(combined_df)
     workbook.save(result.file_path)
 
-    shifted_workbook = shift_workbook(source_df=df, rows=9, cols=1)
+    shifted_workbook = shift_workbook(
+        source_df=df,
+        contract=contract,
+        rows=9,
+        cols=1,
+        documents_folder=documents_folder,
+    )
 
     macro_bytes = wb_to_bytes(workbook)
     shifted_bytes = wb_to_bytes(shifted_workbook)
@@ -720,7 +753,9 @@ def iformulas() -> Generator[
             )
 
 
-def generate_macro(macros_folder: Path, contract: SubsidyContract) -> Result:
+def generate_macro(
+    macros_folder: Path, contract: SubsidyContract, documents_folder: Path
+) -> Result:
     results: list[Result] = []
     for (
         calc_subsidy_sum,
@@ -735,8 +770,11 @@ def generate_macro(macros_folder: Path, contract: SubsidyContract) -> Result:
             calc_subsidy_sum=calc_subsidy_sum,
             calc_principal_balance_check=calc_principal_balance_check,
             calc_day_count=calc_day_count,
+            documents_folder=documents_folder,
         )
+
         validation = validate_macro(contents.df_bytes)
+
         results.append(
             Result(
                 file_path=file_path,
@@ -765,7 +803,9 @@ def process_macro(
     contract_id: str,
     db: DatabaseManager,
     macros_folder: Path,
+    documents_folder: Path,
     raise_exc: bool = True,
+    skip_pretty_macro: bool = False,
 ) -> Macro:
     data = db.request(
         """
@@ -823,17 +863,31 @@ def process_macro(
                 f"Банк/лизинг {contract.bank!r} не поддерживается для сверки."
             )
 
-        result = generate_macro(macros_folder=macros_folder, contract=contract)
+        if skip_pretty_macro:
+            shifted_workbook = shift_workbook(
+                source_df=contract.df,
+                contract=contract,
+                rows=9,
+                cols=1,
+                documents_folder=documents_folder,
+            )
+            shifted_bytes = wb_to_bytes(shifted_workbook)
+        else:
+            result = generate_macro(
+                macros_folder=macros_folder,
+                contract=contract,
+                documents_folder=documents_folder,
+            )
 
-        contents = result.contents
-        if result.validation.error:
-            contents = retry_create_macro(result, raise_exc=raise_exc)
+            contents = result.contents
+            if result.validation.error:
+                contents = retry_create_macro(result, raise_exc=raise_exc)
 
-        macro_bytes, shifted_bytes, df_bytes = (
-            contents.macro_bytes,
-            contents.shifted_macro_bytes,
-            contents.df_bytes,
-        )
+            macro_bytes, shifted_bytes, df_bytes = (
+                contents.macro_bytes,
+                contents.shifted_macro_bytes,
+                contents.df_bytes,
+            )
 
     except (Exception, BaseException) as err:
         logger.exception(err)

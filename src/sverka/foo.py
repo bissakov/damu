@@ -151,7 +151,11 @@ def process_notification(
         return reply
 
     macro = process_macro(
-        contract_id=contract_id, db=db, macros_folder=macros_folder
+        contract_id=contract_id,
+        db=db,
+        macros_folder=macros_folder,
+        documents_folder=documents_folder,
+        skip_pretty_macro=True,
     )
     macro.error.save(db)
     macro.save(db)
@@ -237,7 +241,7 @@ def main() -> None:
             edo=edo,
             crm=crm,
             registry=registry,
-            contract_id="41493bf4-f007-4e56-9bf9-685111bf003a",
+            contract_id="4055f982-6856-4aba-bf37-685e6243004a",
         )
         logger.info(f"Reply: {reply}")
 
