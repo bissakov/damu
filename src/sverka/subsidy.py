@@ -176,6 +176,8 @@ class Error:
             human_readable = (
                 "Номер протокола не найден во время обработки документа."
             )
+        elif "LoanAmountNotFoundError" in trc:
+            human_readable = "Сумма кредита не найдена в файле заявления."
         elif "JoinPDFNotFoundError" in trc:
             human_readable = (
                 "PDF файл 'Заявление получателя к договору "
@@ -244,6 +246,8 @@ class EdoContract:
     contract_id: str
     ds_id: str
     ds_date: date | None
+    dbz_id: str
+    dbz_date: date | None
     sed_number: str
     contract_type: str
 
@@ -252,6 +256,8 @@ class EdoContract:
             "id": self.contract_id,
             "ds_id": self.ds_id,
             "ds_date": self.ds_date,
+            "dbz_iz": self.dbz_id,
+            "dbz_date": self.dbz_date,
             "sed_number": self.sed_number,
             "contract_type": self.contract_type,
         }
@@ -265,9 +271,9 @@ class EdoContract:
         if not contract_exists:
             query = """
                 INSERT OR REPLACE INTO contracts
-                (id, ds_id, ds_date, sed_number, contract_type)
+                (id, ds_id, ds_date, ds_id, dbz_date, sed_number, contract_type)
                 VALUES
-                (:id, :ds_id, :ds_date, :sed_number, :contract_type)
+                (:id, :ds_id, :ds_date, :ds_id, :dbz_date, :sed_number, :contract_type)
             """
         else:
             query = """
@@ -275,6 +281,8 @@ class EdoContract:
                 SET id = :id,
                     ds_id = :ds_id,
                     ds_date = :ds_date,
+                    dbz_id = :dbz_id,
+                    dbz_date = :dbz_date,
                     sed_number = :sed_number,
                     contract_type = :contract_type
                 WHERE id = :id
@@ -292,8 +300,6 @@ class ParseSubsidyContract:
     loan_amount: float | None = None
     iban: str | None = None
     df: pd.DataFrame | None = None
-    dbz_id: str | None = None
-    dbz_date: date | None = None
     file_name: str | None = None
     settlement_date: int | None = None
     error: Error | None = None
@@ -319,8 +325,6 @@ class ParseSubsidyContract:
             "loan_amount": self.loan_amount,
             "iban": self.iban,
             "df": df_blob if self.df is not None else None,
-            "dbz_id": self.dbz_id,
-            "dbz_date": date_to_str(self.dbz_date),
             "file_name": self.file_name,
             "settlement_date": self.settlement_date,
         }
@@ -334,8 +338,6 @@ class ParseSubsidyContract:
                 loan_amount = :loan_amount,
                 iban = :iban,
                 df = :df,
-                dbz_id = :dbz_id,
-                dbz_date = :dbz_date,
                 file_name = :file_name,
                 settlement_date = :settlement_date,
                 modified = CURRENT_TIMESTAMP
@@ -353,8 +355,6 @@ class ParseJoinContract:
     loan_amount: float | None = None
     iban: str | None = None
     df: pd.DataFrame | None = None
-    dbz_id: str | None = None
-    dbz_date: date | None = None
     file_name: str | None = None
     settlement_date: int | None = None
     error: Error | None = None
@@ -380,8 +380,6 @@ class ParseJoinContract:
             "loan_amount": self.loan_amount,
             "iban": self.iban,
             "df": df_blob if self.df is not None else None,
-            "dbz_id": self.dbz_id,
-            "dbz_date": date_to_str(self.dbz_date),
             "file_name": self.file_name,
             "settlement_date": self.settlement_date,
         }

@@ -108,8 +108,8 @@ def process_contract(
             start_date=start_date_str,
             end_date=end_date_str,
             registry=registry,
-            dbz_id=parse_contract.dbz_id,
-            dbz_date=parse_contract.dbz_date,
+            dbz_id=edo_contract.dbz_id,
+            dbz_date=edo_contract.dbz_date,
         )
 
         if crm_contract.error and crm_contract.error.traceback:

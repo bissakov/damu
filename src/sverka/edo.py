@@ -384,8 +384,9 @@ class EDO(RequestHandler):
             contract = EdoContract(
                 contract_id=basic_contract.contract_id,
                 ds_id=ds_id,
-                # contragent=contragent,
                 ds_date=ds_date,
+                dbz_id=ds_id,
+                dbz_date=ds_date,
                 sed_number=row["Порядковый номер"],
             )
             contract.save(db)
@@ -547,8 +548,9 @@ class EDO(RequestHandler):
         contract = EdoContract(
             contract_id=contract_id,
             ds_id=ds_id,
-            # contragent=contragent,
             ds_date=ds_date,
+            dbz_id=ds_id,
+            dbz_date=ds_date,
             sed_number=sed_number,
             contract_type=contract_type,
         )

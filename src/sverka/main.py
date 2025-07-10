@@ -53,7 +53,7 @@ def setup_logger(_today: date | None = None) -> None:
     stream_handler.setFormatter(formatter)
 
     log_folder = Path("logs/sverka")
-    log_folder.mkdir(exist_ok=True)
+    log_folder.mkdir(exist_ok=True, parents=True)
 
     if _today is None:
         _today = datetime.now(pytz.timezone("Asia/Almaty")).date()
@@ -189,7 +189,7 @@ def process_notification(
     macros_folder = save_folder / "macros"
     macros_folder.mkdir(parents=True, exist_ok=True)
 
-    soup, basic_contract, _ = edo.get_basic_contract_data(
+    soup, basic_contract, edo_contract = edo.get_basic_contract_data(
         contract_id=contract_id, db=db
     )
     if not basic_contract:
@@ -260,8 +260,8 @@ def process_notification(
             start_date=start_date_str,
             end_date=end_date_str,
             registry=registry,
-            dbz_id=parse_contract.dbz_id,
-            dbz_date=parse_contract.dbz_date,
+            dbz_id=edo_contract.dbz_id,
+            dbz_date=edo_contract.dbz_date,
         )
 
         if crm_contract.error and crm_contract.error.traceback:
@@ -277,7 +277,11 @@ def process_notification(
         macro.error.save(db)
         macro.save(db)
 
-        if macro.error and macro.error.traceback:
+        if (
+            macro.error
+            and macro.error.traceback
+            and "не поддерживается для сверки" not in macro.error.human_readable
+        ):
             reply = f"Не согласовано. {macro.error.human_readable}"
             logging.error(reply)
             logging.error("Temporarily disabled")
@@ -350,10 +354,10 @@ def process_notifications(
                     logger.error(reply)
                     tg_dev_name = os.environ["TG_DEV_NAME"]
                     bot.send_message(
-                        f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(tasks)}."
+                        f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(failed_tasks)}."
                     )
                     logger.error(
-                        f"Поймана ошибка - кол-во неизвестных {len(tasks)}."
+                        f"Поймана ошибка - кол-во неизвестных {len(failed_tasks)}."
                     )
                     continue
 

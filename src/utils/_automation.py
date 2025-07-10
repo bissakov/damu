@@ -352,6 +352,7 @@ def click_type(
     ent: bool = False,
     spaces: bool = False,
     escape_chars: bool = False,
+    coords: tuple[int, int] | None = None,
 ) -> None:
     focus(win)
 
@@ -368,10 +369,13 @@ def click_type(
     if ent:
         keystrokes = keystrokes + "{ENTER}+{TAB}"
 
+    if not coords:
+        coords = (None, None)
+
     if double:
-        element.double_click_input()
+        element.double_click_input(coords=coords)
     else:
-        element.click_input()
+        element.click_input(coords=coords)
     sleep(delay)
     keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
 

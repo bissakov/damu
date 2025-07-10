@@ -76,7 +76,7 @@ def setup_logger(_today: date | None = None) -> Path:
     stream_handler.setFormatter(formatter)
 
     log_folder = Path("logs/zanesinie")
-    log_folder.mkdir(exist_ok=True)
+    log_folder.mkdir(exist_ok=True, parents=True)
 
     if _today is None:
         _today = datetime.now(pytz.timezone("Asia/Almaty")).date()
@@ -255,7 +255,9 @@ class Contract:
         )
 
         contract_folder = (
-            "downloads" / Path(str(os.environ["today"])) / self.contract_id
+            "downloads/zanesenie"
+            / Path(str(os.environ["today"]))
+            / self.contract_id
         ).absolute()
         with suppress(FileNotFoundError):
             self.protocol_pdf_path = next(
@@ -506,13 +508,11 @@ def has_error(win: WindowSpecification) -> bool:
 def open_file(one_c: App, file_path: Path) -> None:
     one_c.switch_backend("win32")
     save_dialog = one_c.app.window(title_re="Выберите ф.+")
-    save_dialog["&Имя файла:Edit"].set_text(str(file_path))
+    save_dialog["Edit0"].set_text(str(file_path))
     if not save_dialog.is_active():
         save_dialog.set_focus()
         save_dialog.wait(wait_for="visible")
-    save_dialog.child_window(
-        title="&Открыть", class_name="Button"
-    ).click_input()
+    save_dialog.child_window(class_name="Button", found_index=0).click_input()
     one_c.switch_backend("uia")
 
 
@@ -586,7 +586,7 @@ def fill_main_project_data(
     :param win: Главное окно 1С
     :param form: Форма "Карточка проекта (форма элемента)"
     :param contract: Данные договора
-    :return: None # FIXME cls=True protocol_id
+    :return: None
 
     Заполнение данных в форме проекта во вкладке "Основные"
     (Цель кредитования, Номер протокола, Дата протокола, Дата получения протокола РКС филиалом)
@@ -599,9 +599,9 @@ def fill_main_project_data(
         pause=0.1,
         spaces=True,
     )
-    click_type(win, child(form, ctrl="Edit", idx=1), contract.protocol_id)
-    click_type(win, child(form, ctrl="Edit", idx=2), contract.protocol_date)
-    click_type(win, child(form, ctrl="Edit", idx=3), contract.protocol_date)
+    click_type(
+        win, child(form, ctrl="Edit", idx=3), contract.protocol_date, cls=True
+    )
 
 
 def change_date(
@@ -682,31 +682,31 @@ def change_sums(
 
     if (
         contract.credit_purpose == "Пополнение оборотных средств"
-        and existing_pos_amount != contract.subsid_amount
+        and existing_pos_amount != contract.loan_amount
     ):
-        send_keys(win, "{TAB 4}" + str(contract.subsid_amount), pause=0.1)
+        send_keys(win, "{TAB 4}" + str(contract.loan_amount), pause=0.1)
     elif (
         contract.credit_purpose == "Инвестиционный"
-        and existing_investment_amount != contract.subsid_amount
+        and existing_investment_amount != contract.loan_amount
     ):
-        send_keys(win, "{TAB 5}" + str(contract.subsid_amount), pause=0.1)
+        send_keys(win, "{TAB 5}" + str(contract.loan_amount), pause=0.1)
     elif contract.credit_purpose == "Инвестиционный + ПОС":
         if (
-            existing_pos_amount != contract.subsid_amount
-            and existing_investment_amount != contract.subsid_amount
+            existing_pos_amount != contract.loan_amount
+            and existing_investment_amount != contract.loan_amount
         ):
             send_keys(
                 win,
                 "{TAB 4}"
-                + str(contract.subsid_amount)
+                + str(contract.loan_amount)
                 + "{TAB}"
-                + str(contract.subsid_amount),
+                + str(contract.loan_amount),
                 pause=0.1,
             )
-        elif existing_pos_amount != contract.subsid_amount:
-            send_keys(win, "{TAB 4}" + str(contract.subsid_amount), pause=0.1)
-        elif existing_investment_amount != contract.subsid_amount:
-            send_keys(win, "{TAB 5}" + str(contract.subsid_amount), pause=0.1)
+        elif existing_pos_amount != contract.loan_amount:
+            send_keys(win, "{TAB 4}" + str(contract.loan_amount), pause=0.1)
+        elif existing_investment_amount != contract.loan_amount:
+            send_keys(win, "{TAB 5}" + str(contract.loan_amount), pause=0.1)
 
     send_keys(win, "{ESC}", pause=0.5)
     with suppress(ElementNotFoundError):
@@ -862,13 +862,13 @@ def fill_contract_details(
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=19),
-                str(contract.subsid_amount),
+                str(contract.loan_amount),
                 ent=True,
             )
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=20),
-                str(contract.subsid_amount),
+                str(contract.loan_amount),
                 ent=True,
             )
 
@@ -968,27 +968,27 @@ def fill_contract_details(
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=18),
-                str(contract.subsid_amount),
+                str(contract.loan_amount),
                 ent=True,
             )
         elif contract.credit_purpose == "Инвестиционный":
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=19),
-                str(contract.subsid_amount),
+                str(contract.loan_amount),
                 ent=True,
             )
         elif contract.credit_purpose == "Инвестиционный + ПОС":
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=18),
-                str(contract.subsid_amount),
+                str(contract.loan_amount),
                 ent=True,
             )
             click_type(
                 win,
                 child(ds_form, ctrl="Edit", idx=19),
-                str(contract.subsid_amount),
+                str(contract.loan_amount),
                 ent=True,
             )
         else:
@@ -1017,6 +1017,47 @@ def fill_contract_details(
             )
 
 
+def correct_rate_date(
+    table: WindowSpecification, idx: int, start_date_rate: str
+) -> None:
+    elem = child(table, ctrl="Custom", idx=idx)
+    if not elem.exists():
+        logger.error(f"Custom{idx} does not exist in the table")
+        return
+
+    txt = elem.window_txt().strip()
+    if "Период" not in txt:
+        logger.error(f"Found wrong cell with txt - {txt!r}")
+        return
+
+    txt = txt.replace("Период", "").strip()
+    rate_date = datetime.strptime(txt, "%d.%m.%Y").date()
+    start_date_rate_obj = datetime.fromisoformat(start_date_rate)
+    if rate_date == start_date_rate_obj:
+        logger.info(f"No need to correct dates for this period")
+
+    start_date_four_year_str = datetime.strftime(start_date_rate_obj, "%d%m%Y")
+    click_type(table, elem, start_date_four_year_str, double=True)
+
+
+def correct_rates(ds_form: WindowSpecification, rate: InterestRate) -> None:
+    rate_table = child(ds_form, ctrl="Table")
+
+    correct_rate_date(
+        table=rate_table,
+        idx=1,
+        start_date_rate=rate.start_date_one_two_three_year,
+    )
+    if rate.rate_four_year:
+        correct_rate_date(
+            table=rate_table, idx=6, start_date_rate=rate.start_date_four_year
+        )
+    if rate.rate_five_year:
+        correct_rate_date(
+            table=rate_table, idx=11, start_date_rate=rate.start_date_five_year
+        )
+
+
 def fill_contract(
     one_c: App,
     win: WindowSpecification,
@@ -1034,9 +1075,18 @@ def fill_contract(
     click(win, child(form, title="Add", ctrl="Button"))
     ds_form = child(win, ctrl="Pane", idx=51)
 
+    click(win, child(ds_form, title="Обновить", ctrl="Button"))
+    if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
+        click(win, yes_button)
+        sleep(1)
+
     fill_contract_details(win, ds_form, contract, rate)
 
     click(win, child(ds_form, title="Записать", ctrl="Button"))
+
+    if rate.rate_four_year:
+        correct_rates(ds_form, rate)
+        click(win, child(ds_form, title="Записать", ctrl="Button"))
 
     click(win, child(ds_form, title="Основные реквизиты", ctrl="TabItem"))
     click(
@@ -1114,27 +1164,25 @@ def fill_contract(
     )
     sort_win = window(one_c.app, title="Filter and Sort")
     check(child(sort_win, ctrl="CheckBox", idx=2))
-    click_type(
-        win, child(sort_win, ctrl="Edit", idx=5), "Подписан ДС", spaces=True
-    )
+    send_keys(sort_win, "{TAB 2}")
+    send_keys(sort_win, "Подписан ДС", spaces=True)
 
     click(win, child(sort_win, ctrl="Button", title="OK"))
 
     click(win, child(dict_win, ctrl="Custom"), double=True)
 
-    click(win, child(change_ds_status_form, ctrl="Button", title="OK"))
+    click(win, child(change_ds_status_form, ctrl="Button", title="Post"))
 
-    if has_error(win):
-        click(win, child(change_ds_status_form, ctrl="Button", title="Закрыть"))
-        click(win, child(win, ctrl="Button", title="No"))
-
+    click(win, child(change_ds_status_form, ctrl="Button", title="Записать"))
+    click(win, child(change_ds_status_form, ctrl="Button", title="Закрыть"))
     if exists(yes_button := child(win, title="Yes", ctrl="Button")):
         click(win, yes_button)
         sleep(1)
 
-    click_type(win, child(ds_form, ctrl="Edit", idx=4), "{F4}")
+    click_type(win, child(ds_form, ctrl="Edit", idx=4), "{F4}", cls=False)
     sleep(1)
     send_keys(win, "{ENTER}")
+    click_type(win, child(ds_form, ctrl="Edit", idx=4), "^+{F4}", cls=False)
 
     return ds_form
 
@@ -1163,6 +1211,11 @@ def fill_1c(
             )
 
         form = child(win, ctrl="Pane", idx=27)
+
+        click(win, child(form, title="Read", ctrl="Button"))
+        if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
+            click(win, yes_button)
+            sleep(1)
 
         if "Транш" not in contract.contract_type:
             goto_button = child(form, title="Go to", ctrl="Button")
@@ -1248,12 +1301,16 @@ def fill_1c(
 
         open_file(one_c, macro_path)
 
-        menu_select_1c(
-            win,
-            table_form,
-            trigger_btn_name="Проверка введенного графика",
-            menu_names=[contract.category, contract.bank],
-        )
+        table_checked = True
+        try:
+            menu_select_1c(
+                win,
+                table_form,
+                trigger_btn_name="Проверка введенного графика",
+                menu_names=[contract.category, contract.bank],
+            )
+        except ElementNotFoundError:
+            table_checked = False
 
         if (
             close_button := child(win, ctrl="Pane", idx=18).child_window(
@@ -1270,24 +1327,24 @@ def fill_1c(
 
         click(win, child(table_form, title="Закрыть", ctrl="Button"))
 
-        click(win, child(ds_form, title="Обновить", ctrl="Button"))
-        if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
-            click(win, yes_button)
-            sleep(1)
         click(win, child(ds_form, title="Записать", ctrl="Button"))
         click(win, child(ds_form, title="OK", ctrl="Button"))
 
-        click(win, child(form, title="Read", ctrl="Button"))
-        if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
-            click(win, yes_button)
-            sleep(1)
         click(win, child(form, title="Записать", ctrl="Button"))
         click(win, child(form, title="OK", ctrl="Button"))
 
-    if contract.credit_purpose == "Рефинансирование":
-        return "Договор успешно занесен в 1С в проект с целевым назначением 'Рефинансирование'."
+    reply = "Договор успешно занесен в 1С"
 
-    return "Договор успешно занесен в 1С"
+    if contract.credit_purpose == "Рефинансирование":
+        reply += " в проект с целевым назначением 'Рефинансирование'"
+
+    if re.match(r"ПР-\d+", contract.ds_id) is not None:
+        reply += f" с номером '{contract.ds_id}' от {contract.bank}"
+
+    if not table_checked:
+        reply += ". Не удалось проверить график через меню 'Проверка введенного графика'"
+
+    return reply
 
 
 def process_notification(
@@ -1300,8 +1357,8 @@ def process_notification(
 
     contract_id = document_url.split("/")[-1]
 
-    if contract_id in ["587e98a2-cb98-4c1b-9304-685b846e025b"]:
-        return "Неизвестная ошибка"
+    # if contract_id in ["587e98a2-cb98-4c1b-9304-685b846e025b"]:
+    #     return "Неизвестная ошибка"
 
     reply = process_contract(
         logger=logger,
@@ -1403,7 +1460,7 @@ def main() -> None:
 
     dotenv.load_dotenv(".env")
 
-    registry = Registry(download_folder=Path(f"downloads/{today}"))
+    registry = Registry(download_folder=Path(f"downloads/zanesenie/{today}"))
 
     edo = EDO(
         user=os.environ["EDO_1C_USERNAME"],
