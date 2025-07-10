@@ -25,6 +25,9 @@ from sverka.structures import Registry
 from sverka.subsidy import date_to_str
 from utils.db_manager import DatabaseManager
 from utils.utils import safe_extract
+from zanesenie.main import Contract
+from zanesenie.main import InterestRate as ZanInterestRate
+from zanesenie.main import fill_1c, get_contract
 
 
 def setup_logger() -> None:
@@ -43,7 +46,7 @@ def setup_logger() -> None:
     stream_handler.setFormatter(formatter)
 
     log_folder = Path("logs/sverka")
-    log_folder.mkdir(exist_ok=True)
+    log_folder.mkdir(exist_ok=True, parents=True)
     logger_file = log_folder / "test_app.log"
 
     file_handler = logging.FileHandler(logger_file, mode="w+", encoding="utf-8")
@@ -155,7 +158,7 @@ def process_notification(
         db=db,
         macros_folder=macros_folder,
         documents_folder=documents_folder,
-        skip_pretty_macro=True,
+        skip_pretty_macro=False,
     )
     macro.error.save(db)
     macro.save(db)
@@ -236,14 +239,22 @@ def main() -> None:
         #     )
         #     logger.info(f"Reply: {reply}")
 
+        # contract_id = "02821cbb-30d1-4fc2-9d9e-6863d099006c"
+        contract_id = "33bcb577-94e9-4ca9-b224-686798c60094"
+
         reply = process_notification(
-            db=db,
-            edo=edo,
-            crm=crm,
-            registry=registry,
-            contract_id="4055f982-6856-4aba-bf37-685e6243004a",
+            db=db, edo=edo, crm=crm, registry=registry, contract_id=contract_id
         )
         logger.info(f"Reply: {reply}")
+
+        # contract = get_contract(
+        #     contract_id, db, registry.banks.get("mapping", {})
+        # )
+        # rate = ZanInterestRate.load(db, contract.contract_id)
+        # logger.info(f"{contract=!r}")
+        # logger.info(f"{rate=!r}")
+        #
+        # reply = fill_1c(contract, rate, registry, "base.v8i")
 
         # contract_ids = [row[0] for row in db.request("SELECT id FROM contracts", req_type=db.RequestType.FETCH_ALL)]
         # err_count = 0

@@ -13,8 +13,7 @@ from typing import Any, ContextManager, Literal, Type, cast, overload
 logger = logging.getLogger("DAMU")
 
 
-SqlDType = int | float | str | bytes | None
-SqlParams = tuple[SqlDType, ...] | dict[str, SqlDType] | None
+SqlParams = tuple[Any, ...] | dict[str, Any] | None
 
 
 class DatabaseManager:
@@ -41,14 +40,14 @@ class DatabaseManager:
 
     def fetch_one(
         self, query: str, params: SqlParams = None
-    ) -> tuple[SqlDType, ...]:
+    ) -> tuple[Any, ...]:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
-            return cast(tuple[SqlDType, ...], cursor.fetchone())
+            return cast(tuple[Any, ...], cursor.fetchone())
 
     def fetch_all(
         self, query: str, params: SqlParams = None
-    ) -> list[tuple[SqlDType, ...]]:
+    ) -> list[tuple[Any, ...]]:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
             return cursor.fetchall()
@@ -110,7 +109,7 @@ class DatabaseManager:
                 ds_id TEXT NOT NULL,
                 ds_date TEXT,
                 file_name TEXT,
-                contragent TEXT NOT NULL,
+                contragent TEXT,
                 sed_number TEXT,
                 contract_type TEXT,
                 protocol_id TEXT,

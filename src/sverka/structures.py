@@ -1,8 +1,6 @@
-import dataclasses
 import json
 import re
 from pathlib import Path
-from typing import Pattern
 
 MONTHS = {
     "янв": "01",
@@ -63,7 +61,7 @@ RE_FILE_CONTENTS = re.compile(
 )
 RE_WRONG_CONTENTS = re.compile(r"дополнительное соглашение", re.IGNORECASE)
 RE_JOIN_CONTENTS = re.compile(r"договор\w? *присоединени\w", re.IGNORECASE)
-RE_PROTOCOL_ID = re.compile(r" №?\s*(\d{6}) ")
+RE_PROTOCOL_ID = re.compile(r" №?\s*(\d{6})\b")
 RE_IBAN = re.compile(r"коды?:?.+?(KZ[0-9A-Z]{18})", re.IGNORECASE)
 RE_PRIMARY_COLUMN = re.compile(
     r"((дата *погашени\w+ *основно\w+ *долга)|(негізгі *борышты *өтеу))",
@@ -81,15 +79,22 @@ RE_NUMBER = re.compile(r"(\d+)")
 RE_START_DATE = re.compile(r"^9\.")
 RE_END_DATES = [
     re.compile(r"^18\."),
-    re.compile(r"^30\."),
     re.compile(r"^19\."),
+    # re.compile(r"^30\."),
 ]
-RE_JOIN_DATE_RUS = re.compile(
-    r"дата ?[\w\s]+ ?субсидирования\D+ ?(\d+\.\d+\.\d+)", re.IGNORECASE
-)
-RE_JOIN_DATE_KAZ = re.compile(
-    r"күні ?субсидиялау\D+ ?(\d+\.\d+\.\d+)", re.IGNORECASE
-)
+RE_JOIN_DATES = [
+    re.compile(
+        r"дата ?[\w\s]+ ?субсидирования\D+ ?(\d+\.\d+\.\d+)", re.IGNORECASE
+    ),
+    re.compile(r"күні ?субсидиялау\D+ ?(\d+\.\d+\.\d+)", re.IGNORECASE),
+    re.compile(
+        r"дата ?[\w\s]+ ?субсидирования\D+ ?([«\"]?(\d+)[»\"]? (\w+) (\d+))",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"күні ?субсидиялау\D+ ?([«\"]?(\d+)[»\"]? (\w+) (\d+))", re.IGNORECASE
+    ),
+]
 RE_COMPLEX_DATE = re.compile(r"(((\d{2,}) +(\w+) +(\w+) +(\w+))|(\d+.\d+.\d+))")
 RE_WHITESPACE = re.compile(r"\s+")
 RE_DATE_SEPARATOR = re.compile(r"[. /-]")

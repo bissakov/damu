@@ -1,4 +1,6 @@
 @echo off
+title Sverka
+
 set "ROOT=%~dp0"
 pushd %ROOT%src
 

@@ -73,6 +73,7 @@ class Macro(NamedTuple):
             VALUES (:id, :macro, :shifted_macro, :df)
             """,
             self.to_json(),
+            req_type="execute",
         )
 
 
@@ -276,23 +277,24 @@ def shift_workbook(
         ]
     ]
 
-    df = df[
-        (contract.start_date <= df["debt_repayment_date"])
-        & (contract.end_date >= df["debt_repayment_date"])
-    ]
-
-    if df.at[len(df) - 1, "principal_debt_balance"] == 0:
+    if df.loc[len(df) - 1, "principal_debt_balance"] == 0:
         df["principal_debt_balance"] = df["principal_debt_balance"].shift(1)
         df.loc[0, "principal_debt_balance"] = int(contract.loan_amount * 100)
 
-    if df.at[0, "agency_fee_amount"] == 0:
-        # first_principal_debt_balance = df.loc[0, "principal_debt_balance"]
-        # if (
-        #     pd.isna(first_principal_debt_balance)
-        #     or first_principal_debt_balance == 0
-        # ):
-        df = df.iloc[1:]
-        df = df.reset_index(drop=True)
+    df = df[
+        (df["agency_fee_amount"] != 0.0)
+        & (pd.isna(df["agency_fee_amount"]).notna())
+    ].copy()
+    df = df.reset_index(drop=True)
+
+    # if df.loc[0, "agency_fee_amount"] == 0:
+    #     # first_principal_debt_balance = df.loc[0, "principal_debt_balance"]
+    #     # if (
+    #     #     pd.isna(first_principal_debt_balance)
+    #     #     or first_principal_debt_balance == 0
+    #     # ):
+    #     df = df.iloc[1:]
+    #     df = df.reset_index(drop=True)
 
     # df = df[df["agency_fee_amount"] != 0].copy()
     # df = df.reset_index(drop=True)
@@ -621,7 +623,12 @@ def create_macro(
     return MacroContents(macro_bytes, shifted_bytes, df_bytes)
 
 
-def retry_create_macro(result: Result, raise_exc: bool = True) -> MacroContents:
+def retry_create_macro(
+    result: Result,
+    documents_folder: Path,
+    contract: SubsidyContract,
+    raise_exc: bool = True,
+) -> MacroContents:
     df = pd.read_parquet(
         io.BytesIO(result.contents.df_bytes), engine="fastparquet"
     )
@@ -881,7 +888,12 @@ def process_macro(
 
             contents = result.contents
             if result.validation.error:
-                contents = retry_create_macro(result, raise_exc=raise_exc)
+                contents = retry_create_macro(
+                    result,
+                    documents_folder=documents_folder,
+                    contract=contract,
+                    raise_exc=raise_exc,
+                )
 
             macro_bytes, shifted_bytes, df_bytes = (
                 contents.macro_bytes,

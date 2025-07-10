@@ -42,8 +42,7 @@ from sverka.structures import (
     RE_FLOAT_NUMBER_FULL,
     RE_IBAN,
     RE_JOIN_CONTENTS,
-    RE_JOIN_DATE_KAZ,
-    RE_JOIN_DATE_RUS,
+    RE_JOIN_DATES,
     RE_JOIN_LOAN_AMOUNT,
     RE_JOIN_PROTOCOL_ID_KAZ,
     RE_JOIN_PROTOCOL_ID_OCR,
@@ -173,7 +172,7 @@ class SubsidyDocument(DamuDocument):
         self.is_correct_type = (
             RE_FILE_CONTENTS.search(first_n_paras) is not None
             and RE_WRONG_CONTENTS.search(first_n_paras) is None
-        )
+        ) and "термин" in first_n_paras
         return self.is_correct_type
 
 
@@ -540,6 +539,9 @@ class Parser:
                 default=3,
             )
 
+            if len(parsed_table[row_idx]) < 2:
+                return None
+
             logger.info(f"{parsed_table[row_idx][0]=!r}")
             logger.info(f"{parsed_table[row_idx][1]=!r}")
 
@@ -604,6 +606,7 @@ class SubsidyParser(Parser):
             r"Договор\s+финансового\s+лизинга[№ ]+([^ ]+)\s+от\s+(\d+.\d+.\d+)",
             r"Заявление\s+[№ ]+([^ ]+)\s*от\s*(\d+.\d+.\d+)",
             r"График\s*погашения\s*кредита\s*[№ ]+([^ ]+)\s*от\s*(\d+.\d+.\d+)",
+            r"График\s*погашения\s*кредита\s*к\s*заявлению\s*[№ ]+([^ ]+)\s*от\s*(\d+.\d+.\d+)",
         ]
 
         hard_exprs = [
@@ -641,7 +644,7 @@ class SubsidyParser(Parser):
             )
             if match:
                 dbz_id, day, month, year = match.groups()
-                month = MONTHS.get(month[0:3])
+                month = MONTHS.get(month[0:3].lower())
                 fmt = "%d.%m.%y" if len(year) == 2 else "%d.%m.%Y"
                 dbz_date = datetime.strptime(
                     f"{day}.{month}.{year}", fmt
@@ -764,7 +767,7 @@ class SubsidyParser(Parser):
             day, month = month, day
 
         if not month.isdigit():
-            month = month[0:3]
+            month = month[0:3].lower()
             month_num = MONTHS.get(month)
         else:
             month_num = month
@@ -833,10 +836,10 @@ class SubsidyParser(Parser):
         if ibans:
             self.contract.iban = ibans[0]
 
-        self.contract.dbz_id, self.contract.dbz_date = self.find_dbz()
-        logger.info(
-            f"PARSE - dbz_id={self.contract.dbz_id!r}, dbz_date={self.contract.dbz_date!r}"
-        )
+        # self.contract.dbz_id, self.contract.dbz_date = self.find_dbz()
+        # logger.info(
+        #     f"PARSE - dbz_id={self.contract.dbz_id!r}, dbz_date={self.contract.dbz_date!r}"
+        # )
 
         if not self.contract.iban:
             logger.error("PARSE - WARNING - IBAN not found")
@@ -1018,6 +1021,7 @@ class JoinParser(Parser):
                         line = line.strip().lower()
                         if (
                             "номер и дата решения" in line
+                            or "аржы агент" in line
                             and (match := RE_JOIN_PROTOCOL_ID_OCR.search(line))
                             is not None
                         ):
@@ -1057,19 +1061,33 @@ class JoinParser(Parser):
         return protocol_id, loan_amount
 
     def find_join_dates(self) -> tuple[date, date]:
-        pat_rus, pat_kaz = (RE_JOIN_DATE_RUS, RE_JOIN_DATE_KAZ)
-
         dates: list[date] = []
         for para in self.document.paragraphs:
             if len(dates) == 2:
                 break
 
             if (
-                match := (pat_rus.search(para) or pat_kaz.search(para))
+                match := next(
+                    (
+                        m
+                        for pat in RE_JOIN_DATES
+                        if (m := pat.search(para)) is not None
+                    ),
+                    None,
+                )
             ) is not None:
                 date_str = match.group(1)
-                date_obj = datetime.strptime(date_str, "%d.%m.%Y").date()
-                dates.append(date_obj)
+                try:
+                    date_obj = datetime.strptime(date_str, "%d.%m.%Y").date()
+                    dates.append(date_obj)
+                except ValueError as e:
+                    day, month, year = match.groups()[1:]
+                    month = MONTHS.get(month[0:3])
+                    fmt = "%d.%m.%y" if len(year) == 2 else "%d.%m.%Y"
+                    date_obj = datetime.strptime(
+                        f"{day}.{month}.{year}", fmt
+                    ).date()
+                    dates.append(date_obj)
 
         if dates[1] > dates[0]:
             return dates[0], dates[1]
@@ -1103,7 +1121,8 @@ class JoinParser(Parser):
         if ibans:
             self.contract.iban = ibans[0]
 
-        self.contract.dbz_id, self.contract.dbz_date = self.find_dbz()
+        # TODO ? сказали использовать номер и дату дс
+        # self.contract.dbz_id, self.contract.dbz_date = self.find_dbz()
 
         if not self.contract.iban:
             logger.error("PARSE - WARNING - IBAN not found")

@@ -33,11 +33,13 @@ class Schemas:
 
     def project_info(self, protocol_id: str) -> dict[str, Any]:
         schema = self.schemas["project_info"]
-        schema["filters"]["items"]["5e7b1496-66c3-44b7-9098-0f071a07751c"][
+        schema["filters"]["items"]["4e88b7ec-1ec0-4a49-9c9b-eeef5631aaf2"][
             "items"
-        ]["CustomFilters"]["items"]["customFilterProtocolDS_Subsidies"][
-            "rightExpression"
-        ]["parameter"]["value"] = protocol_id
+        ]["CustomFilters"]["items"]["95803cfb-3be2-4399-8094-bed556a09d30"][
+            "subFilters"
+        ]["items"]["febfa638-fc9d-4309-8a82-2749c5f70916"]["rightExpression"][
+            "parameter"
+        ]["value"] = protocol_id
         return schema  # type: ignore
 
     def project(self, project_id: str) -> dict[str, Any]:
@@ -224,6 +226,38 @@ class CRM(RequestHandler):
                 return rows[0]  # type: ignore
 
         return None
+
+    def fetch_protocol_date(self, project_id: str) -> dict[str, Any] | None:
+        if not self.is_logged_in:
+            self.login()
+
+        json_data = self.schemas.vypiska_project(project_id)
+        response = self.request(
+            method="post",
+            path="0/DataService/json/SyncReply/SelectQuery",
+            json=json_data,
+        )
+        if not response:
+            self.is_logged_in = False
+            return None
+
+        if not hasattr(response, "json"):
+            return None
+
+        data = response.json()
+        rows = data.get("rows")
+        assert isinstance(rows, list)
+
+        protocol_date = next(
+            (
+                row.get("Date")
+                for row in rows
+                if row.get("Type", {}).get("displayValue") == "Протокол ДС"
+            ),
+            None,
+        )
+
+        return protocol_date
 
     def fetch_vypiska_id(self, project_id: str) -> dict[str, Any] | None:
         if not self.is_logged_in:
@@ -549,10 +583,14 @@ def fetch_crm_data_one(
     )
     contract.request_number = project.get("RequestNumber")
 
-    date_scoring = project.get("DateScoring") or ""
+    date_scoring = project.get("DateScoring") or crm.fetch_protocol_date(
+        project_id
+    )
+
     contract.protocol_date = datetime.strptime(
         date_scoring, "%Y-%m-%dT%H:%M:%S.%f"
     ).date()
+
     contract.repayment_procedure = registry.mappings.get(
         "repayment_procedure", {}
     ).get(project.get("RepaymentOrderMainLoan", {}).get("displayValue"))

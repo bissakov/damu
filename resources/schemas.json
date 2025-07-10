@@ -1,46 +1,73 @@
 {
-  "project_info":
-  {
+  "project_info": {
     "rootSchemaName": "Subsidies",
     "operationType": 0,
     "includeProcessExecutionData": true,
-    "filters":
-    {
-      "items":
-      {
-        "5e7b1496-66c3-44b7-9098-0f071a07751c":
-        {
-          "items":
-          {
-            "CustomFilters":
-            {
-              "items":
-              {
-                "customFilterProtocolDS_Subsidies":
-                {
-                  "filterType": 1,
-                  "comparisonType": 9,
+    "filters": {
+      "items": {
+        "4e88b7ec-1ec0-4a49-9c9b-eeef5631aaf2": {
+          "items": {
+            "CustomFilters": {
+              "items": {
+                "95803cfb-3be2-4399-8094-bed556a09d30": {
+                  "filterType": 5,
+                  "comparisonType": 15,
                   "isEnabled": true,
                   "trimDateTimeParameterToDate": false,
-                  "leftExpression":
-                  {
+                  "leftExpression": {
                     "expressionType": 0,
-                    "columnPath": "ProtocolDS.Number"
+                    "columnPath": "[Document:Subsid].Id"
                   },
-                  "rightExpression":
-                  {
-                    "expressionType": 2,
-                    "parameter":
-                    {
-                      "dataValueType": 1,
-                      "value": "protocol_id"
-                    }
+                  "subFilters": {
+                    "items": {
+                      "febfa638-fc9d-4309-8a82-2749c5f70916": {
+                        "filterType": 1,
+                        "comparisonType": 3,
+                        "isEnabled": true,
+                        "trimDateTimeParameterToDate": false,
+                        "leftExpression": {
+                          "expressionType": 0,
+                          "columnPath": "Number"
+                        },
+                        "rightExpression": {
+                          "expressionType": 2,
+                          "parameter": {
+                            "dataValueType": 1,
+                            "value": "{protocol_id}"
+                          }
+                        }
+                      },
+                      "304a67a3-187d-444a-b97a-9f297ee0bdd5": {
+                        "filterType": 4,
+                        "comparisonType": 3,
+                        "isEnabled": true,
+                        "trimDateTimeParameterToDate": false,
+                        "leftExpression": {
+                          "expressionType": 0,
+                          "columnPath": "Type"
+                        },
+                        "rightExpressions": [
+                          {
+                            "expressionType": 2,
+                            "parameter": {
+                              "dataValueType": 10,
+                              "value": "353a108b-0987-4166-9406-5ecfe933b0c2"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "logicalOperation": 0,
+                    "isEnabled": true,
+                    "filterType": 6,
+                    "rootSchemaName": "Document"
                   }
                 }
               },
               "logicalOperation": 0,
               "isEnabled": true,
-              "filterType": 6
+              "filterType": 6,
+              "rootSchemaName": "Subsidies"
             }
           },
           "logicalOperation": 0,
@@ -52,92 +79,220 @@
       "isEnabled": true,
       "filterType": 6
     },
-    "columns":
-    {
-      "items":
-      {
-        "Id":
-        {
+    "columns": {
+      "items": {
+        "Id": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Id"
           }
         },
-        "IsStatementProcessing":
-        {
+        "RequestNumberStr": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "RequestNumberStr"
+          }
+        },
+        "IsStatementProcessing": {
+          "caption": "",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
             "expressionType": 0,
             "columnPath": "IsStatementProcessing"
           }
         },
-        "IsEditStatementProcessing":
-        {
+        "IsEditStatementProcessing": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "IsEditStatementProcessing"
           }
         },
-        "Customer":
-        {
+        "RequestPepNumber": {
+          "caption": "",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "RequestPepNumber"
+          }
+        },
+        "Filial": {
+          "caption": "",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "Filial"
+          }
+        },
+        "Customer": {
           "caption": "Заемщик",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Customer"
           }
         },
-        "BvuLk":
-        {
+        "BvuLk": {
           "caption": "БВУ/ЛК",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "BvuLk"
           }
         },
-        "Project":
-        {
+        "Project": {
           "caption": "Проект",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Project"
           }
         },
-        "ProjectAmount":
-        {
+        "ChangingForRequest": {
+          "caption": "Изменения по заявке",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "ChangingForRequest"
+          }
+        },
+        "StatementStage": {
+          "caption": "Стадия",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "StatementStage"
+          }
+        },
+        "State": {
+          "caption": "Состояние",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "State"
+          }
+        },
+        "ProjectAmount": {
           "caption": "Сумма кредита",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProjectAmount"
+          }
+        },
+        "Owner": {
+          "caption": "Ответственный",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "Owner"
+          }
+        },
+        "CreatedOn": {
+          "caption": "Дата создания",
+          "orderDirection": 2,
+          "orderPosition": 1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "CreatedOn"
+          }
+        },
+        "[Agreements:Subsidies].CreatedOn#fu2g95pf63h": {
+          "caption": "Договоры (по колонке Субсидирование).Дата создания",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 3,
+            "functionType": 2,
+            "aggregationType": 5,
+            "columnPath": "[Agreements:Subsidies].CreatedOn",
+            "subFilters": {
+              "items": {},
+              "logicalOperation": 0,
+              "isEnabled": true,
+              "filterType": 6,
+              "rootSchemaName": "Agreements"
+            }
+          }
+        },
+        "BasicDirection": {
+          "caption": "Направление субсидирования",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 0,
+            "columnPath": "BasicDirection"
+          }
+        },
+        "EntryPointsCount": {
+          "caption": "",
+          "orderDirection": 0,
+          "orderPosition": -1,
+          "isVisible": true,
+          "expression": {
+            "expressionType": 3,
+            "aggregationType": 1,
+            "columnPath": "[EntryPoint:EntityId].Id",
+            "subFilters": {
+              "items": {
+                "cb2069fc-8877-490a-8353-e7c5d2fa2988": {
+                  "filterType": 1,
+                  "comparisonType": 3,
+                  "isEnabled": true,
+                  "trimDateTimeParameterToDate": false,
+                  "leftExpression": {
+                    "expressionType": 0,
+                    "columnPath": "IsActive"
+                  },
+                  "rightExpression": {
+                    "expressionType": 2,
+                    "parameter": {
+                      "dataValueType": 1,
+                      "value": true
+                    }
+                  }
+                }
+              },
+              "logicalOperation": 0,
+              "isEnabled": true,
+              "filterType": 6
+            }
           }
         }
       }
@@ -149,8 +304,7 @@
     "allColumns": false,
     "useLocalization": true,
     "useRecordDeactivation": false,
-    "serverESQCacheParameters":
-    {
+    "serverESQCacheParameters": {
       "cacheLevel": 0,
       "cacheGroup": "",
       "cacheItemName": ""
@@ -159,35 +313,28 @@
     "useMetrics": false,
     "querySource": 0,
     "ignoreDisplayValues": false,
-    "conditionalValues": "None",
+    "conditionalValues": null,
     "isHierarchical": false
   },
-  "project":
-  {
+  "project": {
     "rootSchemaName": "Subsidies",
     "operationType": 0,
     "includeProcessExecutionData": true,
-    "filters":
-    {
-      "items":
-      {
-        "primaryColumnFilter":
-        {
+    "filters": {
+      "items": {
+        "primaryColumnFilter": {
           "filterType": 1,
           "comparisonType": 3,
           "isEnabled": true,
           "trimDateTimeParameterToDate": false,
-          "leftExpression":
-          {
+          "leftExpression": {
             "expressionType": 1,
             "functionType": 1,
             "macrosType": 34
           },
-          "rightExpression":
-          {
+          "rightExpression": {
             "expressionType": 2,
-            "parameter":
-            {
+            "parameter": {
               "dataValueType": 0,
               "value": "{project_id}"
             }
@@ -198,1014 +345,844 @@
       "isEnabled": true,
       "filterType": 6
     },
-    "columns":
-    {
-      "items":
-      {
-        "Id":
-        {
+    "columns": {
+      "items": {
+        "Id": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Id"
           }
         },
-        "BvuLkDate":
-        {
+        "BvuLkDate": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "BvuLkDate"
           }
         },
-        "Customer":
-        {
+        "Customer": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Customer"
           }
         },
-        "Project":
-        {
+        "Project": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Project"
           }
         },
-        "BvuLk":
-        {
+        "BvuLk": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "BvuLk"
           }
         },
-        "CreditingPurpose":
-        {
+        "CreditingPurpose": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CreditingPurpose"
           }
         },
-        "SubsidProgram":
-        {
+        "SubsidProgram": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubsidProgram"
           }
         },
-        "ProjectPrice":
-        {
+        "ProjectPrice": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProjectPrice"
           }
         },
-        "ProjectSubsidAmount":
-        {
+        "ProjectSubsidAmount": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProjectSubsidAmount"
           }
         },
-        "ForInvestment":
-        {
+        "ForInvestment": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ForInvestment"
           }
         },
-        "ForPOS":
-        {
+        "ForPOS": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ForPOS"
           }
         },
-        "SpecialPurpose":
-        {
+        "SpecialPurpose": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SpecialPurpose"
           }
         },
-        "DateScoring":
-        {
+        "DateScoring": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "DateScoring"
           }
         },
-        "RequestNumber":
-        {
+        "RequestNumber": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RequestNumber"
           }
         },
-        "RequestPepNumber":
-        {
+        "RequestPepNumber": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RequestPepNumber"
           }
         },
-        "RequestRegDate":
-        {
+        "RequestRegDate": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RequestRegDate"
           }
         },
-        "PlanDueDate":
-        {
+        "PlanDueDate": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "PlanDueDate"
           }
         },
-        "DueDate":
-        {
+        "DueDate": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "DueDate"
           }
         },
-        "ProjectValid":
-        {
+        "ProjectValid": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProjectValid"
           }
         },
-        "CreditAmount":
-        {
+        "CreditAmount": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CreditAmount"
           }
         },
-        "CreditTermMonth":
-        {
+        "CreditTermMonth": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CreditTermMonth"
           }
         },
-        "NominalInterestRate":
-        {
+        "NominalInterestRate": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "NominalInterestRate"
           }
         },
-        "SubsidInterestRate":
-        {
+        "SubsidInterestRate": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubsidInterestRate"
           }
         },
-        "SubsidTermMonth":
-        {
+        "SubsidTermMonth": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubsidTermMonth"
           }
         },
-        "RepaymentOrderMainLoan":
-        {
+        "RepaymentOrderMainLoan": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RepaymentOrderMainLoan"
           }
         },
-        "RepaymentOrderRewards":
-        {
+        "RepaymentOrderRewards": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RepaymentOrderRewards"
           }
         },
-        "ApproveDateSubsid":
-        {
+        "ApproveDateSubsid": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ApproveDateSubsid"
           }
         },
-        "ProjectAmount":
-        {
+        "ProjectAmount": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProjectAmount"
           }
         },
-        "ProjectAmountDS":
-        {
+        "ProjectAmountDS": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProjectAmountDS"
           }
         },
-        "SubsidTerm":
-        {
+        "SubsidTerm": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubsidTerm"
           }
         },
-        "SubsidTermDS":
-        {
+        "SubsidTermDS": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubsidTermDS"
           }
         },
-        "Notes":
-        {
+        "Notes": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Notes"
           }
         },
-        "AverageAnnualIncome":
-        {
+        "AverageAnnualIncome": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "AverageAnnualIncome"
           }
         },
-        "AverageNumberEmployees":
-        {
+        "AverageNumberEmployees": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "AverageNumberEmployees"
           }
         },
-        "ActualNumberEmployees":
-        {
+        "ActualNumberEmployees": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ActualNumberEmployees"
           }
         },
-        "JobsCreated":
-        {
+        "JobsCreated": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "JobsCreated"
           }
         },
-        "PerformanceCriteria":
-        {
+        "PerformanceCriteria": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "PerformanceCriteria"
           }
         },
-        "NotesRF":
-        {
+        "NotesRF": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "NotesRF"
           }
         },
-        "ProjectSpecialConditions":
-        {
+        "ProjectSpecialConditions": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProjectSpecialConditions"
           }
         },
-        "SubsidiesPaidForCurrentTime":
-        {
+        "SubsidiesPaidForCurrentTime": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubsidiesPaidForCurrentTime"
           }
         },
-        "SubsidiesPlanForCurrentYear":
-        {
+        "SubsidiesPlanForCurrentYear": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubsidiesPlanForCurrentYear"
           }
         },
-        "SubsidPlanAmountForLastPeriod":
-        {
+        "SubsidPlanAmountForLastPeriod": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubsidPlanAmountForLastPeriod"
           }
         },
-        "EssenceRequestedChanges":
-        {
+        "EssenceRequestedChanges": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "EssenceRequestedChanges"
           }
         },
-        "RequestNumberStr":
-        {
+        "RequestNumberStr": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RequestNumberStr"
           }
         },
-        "ProjectStatusSubsid":
-        {
+        "ProjectStatusSubsid": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProjectStatusSubsid"
           }
         },
-        "GracePeriodODMonthsStr":
-        {
+        "GracePeriodODMonthsStr": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "GracePeriodODMonthsStr"
           }
         },
-        "VisaLastDate":
-        {
+        "VisaLastDate": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "VisaLastDate"
           }
         },
-        "ProtocolDS":
-        {
+        "ProtocolDS": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ProtocolDS"
           }
         },
-        "ForecastAmountTranche":
-        {
+        "ForecastAmountTranche": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ForecastAmountTranche"
           }
         },
-        "ForecastAmountSubTerm":
-        {
+        "ForecastAmountSubTerm": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ForecastAmountSubTerm"
           }
         },
-        "BranchLineOfBusiness":
-        {
+        "BranchLineOfBusiness": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "BranchLineOfBusiness"
           }
         },
-        "AmountPlannedSubsidiesCurrentFinancialYear":
-        {
+        "AmountPlannedSubsidiesCurrentFinancialYear": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "AmountPlannedSubsidiesCurrentFinancialYear"
           }
         },
-        "ApprovedByManagerDS":
-        {
+        "ApprovedByManagerDS": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ApprovedByManagerDS"
           }
         },
-        "CoordinationResultDsManager":
-        {
+        "CoordinationResultDsManager": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CoordinationResultDsManager"
           }
         },
-        "ApprovedDateDsManager":
-        {
+        "ApprovedDateDsManager": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ApprovedDateDsManager"
           }
         },
-        "AmmountCreditNtionalCurrency":
-        {
+        "AmmountCreditNtionalCurrency": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "AmmountCreditNtionalCurrency"
           }
         },
-        "CountDayInWork":
-        {
+        "CountDayInWork": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CountDayInWork"
           }
         },
-        "ScoringPoints":
-        {
+        "ScoringPoints": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ScoringPoints"
           }
         },
-        "ScoringInfo":
-        {
+        "ScoringInfo": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ScoringInfo"
           }
         },
-        "ExperationDateSubsidies":
-        {
+        "ExperationDateSubsidies": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ExperationDateSubsidies"
           }
         },
-        "ExperationDateCredit":
-        {
+        "ExperationDateCredit": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ExperationDateCredit"
           }
         },
-        "ForPOS30":
-        {
+        "ForPOS30": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "ForPOS30"
           }
         },
-        "UId1c":
-        {
+        "UId1c": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "UId1c"
           }
         },
-        "AmmountCreditNtionalCurrencyBillion":
-        {
+        "AmmountCreditNtionalCurrencyBillion": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "AmmountCreditNtionalCurrencyBillion"
           }
         },
-        "NominalRateBSNBRK":
-        {
+        "NominalRateBSNBRK": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "NominalRateBSNBRK"
           }
         },
-        "PresenceOfBudgetFundsAvailable":
-        {
+        "PresenceOfBudgetFundsAvailable": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "PresenceOfBudgetFundsAvailable"
           }
         },
-        "NotMeetConditionsOfProgram":
-        {
+        "NotMeetConditionsOfProgram": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "NotMeetConditionsOfProgram"
           }
         },
-        "NumberDaysOverdue":
-        {
+        "NumberDaysOverdue": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "NumberDaysOverdue"
           }
         },
-        "Recommendation":
-        {
+        "Recommendation": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Recommendation"
           }
         },
-        "RecommendationKAZ":
-        {
+        "RecommendationKAZ": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RecommendationKAZ"
           }
         },
-        "CorelationId":
-        {
+        "CorelationId": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CorelationId"
           }
         },
-        "RequestSystemId":
-        {
+        "RequestSystemId": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RequestSystemId"
           }
         },
-        "RootOfQuestion":
-        {
+        "RootOfQuestion": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "RootOfQuestion"
           }
         },
-        "PsLinkToSOED":
-        {
+        "PsLinkToSOED": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "PsLinkToSOED"
           }
         },
-        "Foreignparticipation":
-        {
+        "Foreignparticipation": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Foreignparticipation"
           }
         },
-        "SubProccesingStartDate":
-        {
+        "SubProccesingStartDate": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "SubProccesingStartDate"
           }
         },
-        "INFSubsidInterestRateFourYear":
-        {
+        "INFSubsidInterestRateFourYear": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "INFSubsidInterestRateFourYear"
           }
         },
-        "INFSubsidInterestRateFiveYear":
-        {
+        "INFSubsidInterestRateFiveYear": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "INFSubsidInterestRateFiveYear"
           }
         },
-        "INFSubsidInterestRateSixSevenYear":
-        {
+        "INFSubsidInterestRateSixSevenYear": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "INFSubsidInterestRateSixSevenYear"
           }
         },
-        "INFSubsidInterestRateFee":
-        {
+        "INFSubsidInterestRateFee": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "INFSubsidInterestRateFee"
           }
         },
-        "INFSubsidInterestRateFeeFourYear":
-        {
+        "INFSubsidInterestRateFeeFourYear": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "INFSubsidInterestRateFeeFourYear"
           }
         },
-        "INFSubsidInterestRateFeeFiveYear":
-        {
+        "INFSubsidInterestRateFeeFiveYear": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "INFSubsidInterestRateFeeFiveYear"
           }
         },
-        "INFSubsidInterestRateFeeSixSevenYear":
-        {
+        "INFSubsidInterestRateFeeSixSevenYear": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "INFSubsidInterestRateFeeSixSevenYear"
           }
         },
-        "Project.Account":
-        {
+        "Project.Account": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Project.Account"
           }
@@ -1219,8 +1196,7 @@
     "allColumns": false,
     "useLocalization": true,
     "useRecordDeactivation": false,
-    "serverESQCacheParameters":
-    {
+    "serverESQCacheParameters": {
       "cacheLevel": 0,
       "cacheGroup": "",
       "cacheItemName": ""
@@ -1231,35 +1207,26 @@
     "ignoreDisplayValues": false,
     "isHierarchical": false
   },
-  "vypiska_project":
-  {
+  "vypiska_project": {
     "rootSchemaName": "Document",
     "operationType": 0,
     "includeProcessExecutionData": true,
-    "filters":
-    {
-      "items":
-      {
-        "c72e0a89-19a9-441c-bc2c-cb0148ffce91":
-        {
-          "items":
-          {
-            "masterRecordFilter":
-            {
+    "filters": {
+      "items": {
+        "c72e0a89-19a9-441c-bc2c-cb0148ffce91": {
+          "items": {
+            "masterRecordFilter": {
               "filterType": 1,
               "comparisonType": 3,
               "isEnabled": true,
               "trimDateTimeParameterToDate": false,
-              "leftExpression":
-              {
+              "leftExpression": {
                 "expressionType": 0,
                 "columnPath": "Subsid"
               },
-              "rightExpression":
-              {
+              "rightExpression": {
                 "expressionType": 2,
-                "parameter":
-                {
+                "parameter": {
                   "dataValueType": 1,
                   "value": "project_id"
                 }
@@ -1275,125 +1242,101 @@
       "isEnabled": true,
       "filterType": 6
     },
-    "columns":
-    {
-      "items":
-      {
-        "Id":
-        {
+    "columns": {
+      "items": {
+        "Id": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Id"
           }
         },
-        "Note":
-        {
+        "Note": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Note"
           }
         },
-        "Number":
-        {
+        "Number": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Number"
           }
         },
-        "Type":
-        {
+        "Type": {
           "caption": "Тип",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Type"
           }
         },
-        "Date":
-        {
+        "Date": {
           "caption": "Дата",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Date"
           }
         },
-        "State":
-        {
+        "State": {
           "caption": "Состояние",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "State"
           }
         },
-        "Owner":
-        {
+        "Owner": {
           "caption": "Ответственный",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Owner"
           }
         },
-        "EntryPointsCount":
-        {
+        "EntryPointsCount": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 3,
             "aggregationType": 1,
             "columnPath": "[EntryPoint:EntityId].Id",
-            "subFilters":
-            {
-              "items":
-              {
-                "62bebda7-cb2f-4662-bdbe-79aec8b3e89d":
-                {
+            "subFilters": {
+              "items": {
+                "62bebda7-cb2f-4662-bdbe-79aec8b3e89d": {
                   "filterType": 1,
                   "comparisonType": 3,
                   "isEnabled": true,
                   "trimDateTimeParameterToDate": false,
-                  "leftExpression":
-                  {
+                  "leftExpression": {
                     "expressionType": 0,
                     "columnPath": "IsActive"
                   },
-                  "rightExpression":
-                  {
+                  "rightExpression": {
                     "expressionType": 2,
-                    "parameter":
-                    {
+                    "parameter": {
                       "dataValueType": 1,
                       "value": true
                     }
@@ -1415,8 +1358,7 @@
     "allColumns": false,
     "useLocalization": true,
     "useRecordDeactivation": false,
-    "serverESQCacheParameters":
-    {
+    "serverESQCacheParameters": {
       "cacheLevel": 0,
       "cacheGroup": "",
       "cacheItemName": ""
@@ -1428,56 +1370,43 @@
     "conditionalValues": "None",
     "isHierarchical": false
   },
-  "vypiska":
-  {
+  "vypiska": {
     "rootSchemaName": "DocumentFile",
     "operationType": 0,
     "includeProcessExecutionData": true,
-    "filters":
-    {
-      "items":
-      {
-        "entityFilterGroup":
-        {
-          "items":
-          {
-            "masterRecordFilter":
-            {
+    "filters": {
+      "items": {
+        "entityFilterGroup": {
+          "items": {
+            "masterRecordFilter": {
               "filterType": 1,
               "comparisonType": 3,
               "isEnabled": true,
               "trimDateTimeParameterToDate": false,
-              "leftExpression":
-              {
+              "leftExpression": {
                 "expressionType": 0,
                 "columnPath": "Document"
               },
-              "rightExpression":
-              {
+              "rightExpression": {
                 "expressionType": 2,
-                "parameter":
-                {
+                "parameter": {
                   "dataValueType": 1,
                   "value": "vypiska_id"
                 }
               }
             },
-            "b19c9ce1-07f7-41ae-9f85-17a3d6cbc788":
-            {
+            "b19c9ce1-07f7-41ae-9f85-17a3d6cbc788": {
               "filterType": 1,
               "comparisonType": 3,
               "isEnabled": true,
               "trimDateTimeParameterToDate": false,
-              "leftExpression":
-              {
+              "leftExpression": {
                 "expressionType": 0,
                 "columnPath": "Document"
               },
-              "rightExpression":
-              {
+              "rightExpression": {
                 "expressionType": 2,
-                "parameter":
-                {
+                "parameter": {
                   "dataValueType": 1,
                   "value": "vypiska_id"
                 }
@@ -1493,125 +1422,101 @@
       "isEnabled": true,
       "filterType": 6
     },
-    "columns":
-    {
-      "items":
-      {
-        "Id":
-        {
+    "columns": {
+      "items": {
+        "Id": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Id"
           }
         },
-        "Name":
-        {
+        "Name": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Name"
           }
         },
-        "Type":
-        {
+        "Type": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Type"
           }
         },
-        "Version":
-        {
+        "Version": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Version"
           }
         },
-        "CreatedBy":
-        {
+        "CreatedBy": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CreatedBy"
           }
         },
-        "Notes":
-        {
+        "Notes": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Notes"
           }
         },
-        "CreatedOn":
-        {
+        "CreatedOn": {
           "caption": "Дата создания",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CreatedOn"
           }
         },
-        "EntryPointsCount":
-        {
+        "EntryPointsCount": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 3,
             "aggregationType": 1,
             "columnPath": "[EntryPoint:EntityId].Id",
-            "subFilters":
-            {
-              "items":
-              {
-                "2b65283a-7333-4c0c-bfe6-74be42ac7a88":
-                {
+            "subFilters": {
+              "items": {
+                "2b65283a-7333-4c0c-bfe6-74be42ac7a88": {
                   "filterType": 1,
                   "comparisonType": 3,
                   "isEnabled": true,
                   "trimDateTimeParameterToDate": false,
-                  "leftExpression":
-                  {
+                  "leftExpression": {
                     "expressionType": 0,
                     "columnPath": "IsActive"
                   },
-                  "rightExpression":
-                  {
+                  "rightExpression": {
                     "expressionType": 2,
-                    "parameter":
-                    {
+                    "parameter": {
                       "dataValueType": 1,
                       "value": true
                     }
@@ -1633,8 +1538,7 @@
     "allColumns": false,
     "useLocalization": true,
     "useRecordDeactivation": false,
-    "serverESQCacheParameters":
-    {
+    "serverESQCacheParameters": {
       "cacheLevel": 0,
       "cacheGroup": "",
       "cacheItemName": ""
@@ -1646,35 +1550,26 @@
     "conditionalValues": "None",
     "isHierarchical": false
   },
-  "agreements":
-  {
+  "agreements": {
     "rootSchemaName": "Agreements",
     "operationType": 0,
     "includeProcessExecutionData": true,
-    "filters":
-    {
-      "items":
-      {
-        "d6ff8291-010e-4c2e-b230-6727f954b94f":
-        {
-          "items":
-          {
-            "masterRecordFilter":
-            {
+    "filters": {
+      "items": {
+        "d6ff8291-010e-4c2e-b230-6727f954b94f": {
+          "items": {
+            "masterRecordFilter": {
               "filterType": 1,
               "comparisonType": 3,
               "isEnabled": true,
               "trimDateTimeParameterToDate": false,
-              "leftExpression":
-              {
+              "leftExpression": {
                 "expressionType": 0,
                 "columnPath": "Subsidies"
               },
-              "rightExpression":
-              {
+              "rightExpression": {
                 "expressionType": 2,
-                "parameter":
-                {
+                "parameter": {
                   "dataValueType": 1,
                   "value": "project_id"
                 }
@@ -1690,113 +1585,91 @@
       "isEnabled": true,
       "filterType": 6
     },
-    "columns":
-    {
-      "items":
-      {
-        "Id":
-        {
+    "columns": {
+      "items": {
+        "Id": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Id"
           }
         },
-        "Name":
-        {
+        "Name": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "Name"
           }
         },
-        "DateDBZ":
-        {
+        "DateDBZ": {
           "caption": "Дата ДБЗ",
           "orderDirection": 2,
           "orderPosition": 1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "DateDBZ"
           }
         },
-        "NumberDBZ":
-        {
+        "NumberDBZ": {
           "caption": "№ ДБЗ",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "NumberDBZ"
           }
         },
-        "DateDS":
-        {
+        "DateDS": {
           "caption": "Дата ДС",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "DateDS"
           }
         },
-        "CreatedOn":
-        {
+        "CreatedOn": {
           "caption": "Дата создания",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "CreatedOn"
           }
         },
-        "EntryPointsCount":
-        {
+        "EntryPointsCount": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 3,
             "aggregationType": 1,
             "columnPath": "[EntryPoint:EntityId].Id",
-            "subFilters":
-            {
-              "items":
-              {
-                "ef60c37f-98c9-451e-8673-f4c3a4107188":
-                {
+            "subFilters": {
+              "items": {
+                "ef60c37f-98c9-451e-8673-f4c3a4107188": {
                   "filterType": 1,
                   "comparisonType": 3,
                   "isEnabled": true,
                   "trimDateTimeParameterToDate": false,
-                  "leftExpression":
-                  {
+                  "leftExpression": {
                     "expressionType": 0,
                     "columnPath": "IsActive"
                   },
-                  "rightExpression":
-                  {
+                  "rightExpression": {
                     "expressionType": 2,
-                    "parameter":
-                    {
+                    "parameter": {
                       "dataValueType": 1,
                       "value": true
                     }
@@ -1818,8 +1691,7 @@
     "allColumns": false,
     "useLocalization": true,
     "useRecordDeactivation": false,
-    "serverESQCacheParameters":
-    {
+    "serverESQCacheParameters": {
       "cacheLevel": 0,
       "cacheGroup": "",
       "cacheItemName": ""
@@ -1831,32 +1703,25 @@
     "conditionalValues": "None",
     "isHierarchical": false
   },
-  "contragent":
-  {
+  "contragent": {
     "rootSchemaName": "Account",
     "operationType": 0,
     "includeProcessExecutionData": true,
-    "filters":
-    {
-      "items":
-      {
-        "primaryColumnFilter":
-        {
+    "filters": {
+      "items": {
+        "primaryColumnFilter": {
           "filterType": 1,
           "comparisonType": 3,
           "isEnabled": true,
           "trimDateTimeParameterToDate": false,
-          "leftExpression":
-          {
+          "leftExpression": {
             "expressionType": 1,
             "functionType": 1,
             "macrosType": 34
           },
-          "rightExpression":
-          {
+          "rightExpression": {
             "expressionType": 2,
-            "parameter":
-            {
+            "parameter": {
               "dataValueType": 0,
               "value": "{contragent_id}"
             }
@@ -1867,18 +1732,14 @@
       "isEnabled": true,
       "filterType": 6
     },
-    "columns":
-    {
-      "items":
-      {
-        "BinInn":
-        {
+    "columns": {
+      "items": {
+        "BinInn": {
           "caption": "",
           "orderDirection": 0,
           "orderPosition": -1,
           "isVisible": true,
-          "expression":
-          {
+          "expression": {
             "expressionType": 0,
             "columnPath": "BinInn"
           }
@@ -1892,8 +1753,7 @@
     "allColumns": false,
     "useLocalization": true,
     "useRecordDeactivation": false,
-    "serverESQCacheParameters":
-    {
+    "serverESQCacheParameters": {
       "cacheLevel": 0,
       "cacheGroup": "",
       "cacheItemName": ""
