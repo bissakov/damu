@@ -25,9 +25,6 @@ from sverka.structures import Registry
 from sverka.subsidy import date_to_str
 from utils.db_manager import DatabaseManager
 from utils.utils import safe_extract
-from zanesenie.main import Contract
-from zanesenie.main import InterestRate as ZanInterestRate
-from zanesenie.main import fill_1c, get_contract
 
 
 def setup_logger() -> None:
@@ -79,7 +76,7 @@ def process_notification(
     macros_folder = save_folder / "macros"
     macros_folder.mkdir(parents=True, exist_ok=True)
 
-    soup, basic_contract, _ = edo.get_basic_contract_data(
+    soup, basic_contract, edo_contract = edo.get_basic_contract_data(
         contract_id=contract_id, db=db
     )
     if not basic_contract:
@@ -125,6 +122,10 @@ def process_notification(
         reply = f"{parse_contract.error.human_readable}\nНе удалось обработать договор."
         return reply
 
+    # # FIXME TEMP DELETE
+    # reply = "Согласовано. Не найдено замечаний."
+    # return reply
+
     protocol_ids_str = cast(str, parse_contract.protocol_id)
     protocol_ids = protocol_ids_str.split(";")
     start_date = cast(date, parse_contract.start_date)
@@ -145,13 +146,15 @@ def process_notification(
             start_date=start_date_str,
             end_date=end_date_str,
             registry=registry,
-            dbz_id=parse_contract.dbz_id,
-            dbz_date=parse_contract.dbz_date,
+            dbz_id=edo_contract.ds_id,
+            dbz_date=edo_contract.ds_date,
         )
 
-    if crm_contract.error.traceback:
-        reply = f"{crm_contract.error.human_readable}\nНе удалось выгрузить данные из CRM."
-        return reply
+        if crm_contract.error.traceback:
+            reply = f"{crm_contract.error.human_readable}\nНе удалось выгрузить данные из CRM."
+            return reply
+
+        pass
 
     macro = process_macro(
         contract_id=contract_id,
@@ -205,7 +208,9 @@ def delete_leftovers(download_folder: Path, max_days: int = 14) -> None:
 def main() -> None:
     dotenv.load_dotenv(".env")
 
-    registry = Registry(download_folder=Path(f"downloads/{today}"))
+    registry = Registry(
+        download_folder=Path(f"downloads/sverka"), db_name="sverka"
+    )
 
     edo = EDO(
         user=os.environ["EDO_USERNAME"],
@@ -226,49 +231,80 @@ def main() -> None:
     logger.info('START of the process "Сверка договоров"')
 
     with DatabaseManager(registry.database) as db:
-        # contract_ids = os.listdir(
-        #     r"C:\Users\robot3\Desktop\damu\downloads\2025-06-23"
+        # contracts = db.request(
+        #     """
+        #     SELECT id, modified, file_name, contract_type FROM contracts
+        #     WHERE
+        #         file_name IS NOT NULL
+        #         AND contract_type = "Первый договор субсидирования"
+        #     """,
+        #     req_type="fetch_all",
         # )
-        # for contract_id in contract_ids:
-        #     reply = process_notification(
-        #         db=db,
-        #         edo=edo,
-        #         crm=crm,
-        #         registry=registry,
-        #         contract_id=contract_id,
+        #
+        # data = []
+        #
+        # for i, contract in enumerate(contracts):
+        #     contract_id, modified, file_name, contract_type = contract
+        #     modified = datetime.fromisoformat(modified).date().isoformat()
+        #
+        #     ds_file_path = (
+        #         registry.download_folder
+        #         / modified
+        #         / contract_id
+        #         / "documents"
+        #         / file_name
         #     )
-        #     logger.info(f"Reply: {reply}")
+        #     if not ds_file_path.exists():
+        #         continue
+        #
+        #     document = SubsidyDocument(file_path=ds_file_path)
+        #     if not document.is_correct_file():
+        #         continue
+        #
+        #     table_parser = TableParser(document=document)
+        #
+        #     table = next(
+        #         (
+        #             pt
+        #             for t in document.doc.tables
+        #             if (
+        #                 pt := table_parser.parse_table(
+        #                     t, replace_newlines=False
+        #                 )
+        #             )
+        #             and "получат" in pt[0][-1].lower()
+        #         ),
+        #         None,
+        #     )
+        #
+        #     if not table:
+        #         print(ds_file_path.as_posix())
+        #         continue
+        #
+        #     row = next(
+        #         (r for r in table[::-1] if "БИН" in r[-1] or "ИИН" in r[-1]),
+        #         None,
+        #     )
+        #
+        #     # if len(row) != 3:
+        #     #     print(ds_file_path.as_posix())
+        #     #     continue
+        #
+        #     data.append(row[-1].strip())
+        #
+        # import pandas as pd
+        #
+        # df = pd.DataFrame(data, columns=["Получатель"])
+        # df.to_excel(
+        #     r"C:\Users\robot2\Desktop\robots\damu\test.xlsx", index=False
+        # )
 
-        # contract_id = "02821cbb-30d1-4fc2-9d9e-6863d099006c"
-        contract_id = "33bcb577-94e9-4ca9-b224-686798c60094"
+        contract_id = "183c24f3-0686-43bf-a326-688c5e73004c"
 
         reply = process_notification(
             db=db, edo=edo, crm=crm, registry=registry, contract_id=contract_id
         )
         logger.info(f"Reply: {reply}")
-
-        # contract = get_contract(
-        #     contract_id, db, registry.banks.get("mapping", {})
-        # )
-        # rate = ZanInterestRate.load(db, contract.contract_id)
-        # logger.info(f"{contract=!r}")
-        # logger.info(f"{rate=!r}")
-        #
-        # reply = fill_1c(contract, rate, registry, "base.v8i")
-
-        # contract_ids = [row[0] for row in db.request("SELECT id FROM contracts", req_type=db.RequestType.FETCH_ALL)]
-        # err_count = 0
-        # for idx, contract_id in enumerate(contract_ids, start=1):
-        #     break
-        #     logger.info(f"Progress: {idx}/{len(contract_ids)}")
-        #
-        #     reply = process_notification(db=db, edo=edo, crm=crm, registry=registry, contract_id=contract_id)
-        #     logger.info(f"Reply: {reply}")
-        #
-        #     if reply != "Согласовано. Не найдено замечаний.":
-        #         err_count += 1
-        #
-        # logger.info(f"err_count: {err_count}")
 
 
 if __name__ == "__main__":

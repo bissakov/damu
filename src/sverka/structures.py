@@ -1,6 +1,12 @@
+from __future__ import annotations
+
 import json
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Literal
 
 MONTHS = {
     "янв": "01",
@@ -112,7 +118,7 @@ RE_JOIN_PROTOCOL_ID_KAZ = re.compile(
     re.IGNORECASE,
 )
 # RE_JOIN_LOAN_AMOUNT = re.compile(r"([\d., ]{6,})")
-RE_JOIN_LOAN_AMOUNT = re.compile(r"([\d ]+,?\d+)")
+RE_JOIN_LOAN_AMOUNT = re.compile(r"([\d\s]+,?\d+)")
 RE_JOIN_PROTOCOL_ID_OCR = re.compile(r"(\d{5,})", re.IGNORECASE)
 RE_JOIN_PDF_PATH = re.compile(
     r"заявление получателя к договору присоединения", re.IGNORECASE
@@ -120,12 +126,16 @@ RE_JOIN_PDF_PATH = re.compile(
 
 
 class Registry:
-    def __init__(self, download_folder: Path) -> None:
+    def __init__(
+        self,
+        download_folder: Path,
+        db_name: Literal["sverka", "zanesenie", "test"],
+    ) -> None:
         self.download_folder: Path = download_folder
         self.download_folder.mkdir(parents=True, exist_ok=True)
 
         self.resources_folder: Path = Path("resources")
-        self.database = self.resources_folder / "database.sqlite"
+        self.database = self.resources_folder / f"{db_name}.sqlite"
 
         self.schema_json_path = self.resources_folder / "schemas.json"
 
@@ -135,4 +145,4 @@ class Registry:
 
         banks_json_path = self.resources_folder / "banks.json"
         with banks_json_path.open("r", encoding="utf-8") as f:
-            self.banks = json.load(f)
+            self.banks: dict[str, int | None] = json.load(f)

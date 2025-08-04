@@ -1,18 +1,18 @@
+from __future__ import annotations
+
 import logging
+import os
 import re
 import traceback
 from contextlib import suppress
 from datetime import date, datetime
 from enum import Enum
-from pathlib import Path
-from typing import Any, cast, override
+from typing import TYPE_CHECKING, cast, override
 
 import ocrmypdf
 import pandas as pd
 from docx import Document
-from docx.table import Table
-from docx.text.paragraph import Paragraph
-from pandas._libs import OutOfBoundsDatetime
+from pandas._libs.tslibs.parsing import DateParseError
 
 from sverka.error import (
     ContractsNofFoundError,
@@ -55,12 +55,20 @@ from sverka.structures import (
     RE_START_DATE,
     RE_WHITESPACE,
     RE_WRONG_CONTENTS,
+    RE_DATE,
 )
-from sverka.subsidy import Error, ParseJoinContract, ParseSubsidyContract
-from utils.db_manager import DatabaseManager
+from sverka.subsidy import Error
+from sverka.subsidy import ParseSubsidyContract, ParseJoinContract
 from utils.my_collections import find, index
-from utils.office import Office
+from utils.office import recover_docx
 from utils.utils import compare
+
+if TYPE_CHECKING:
+    from typing import Any
+    from pathlib import Path
+    from docx.text.paragraph import Paragraph
+    from docx.table import Table
+    from utils.db_manager import DatabaseManager
 
 logger = logging.getLogger("DAMU")
 
@@ -68,31 +76,6 @@ logger = logging.getLogger("DAMU")
 class Backend(Enum):
     PythonDocx = 0
     Docx2Python = 1
-
-
-def recover_document(file_path: Path) -> Path:
-    logger.info(f"Recovering corrupted document: {file_path}")
-
-    og_file_path = file_path.with_name(f"og_{file_path.name}")
-    if og_file_path.exists():
-        og_file_path.unlink()
-    file_path.rename(og_file_path)
-
-    copy_file_path = file_path.parent / f"copy_{file_path.name}"
-
-    try:
-        with Office(
-            file_path=og_file_path, office_type=Office.Type.WordType
-        ) as word:
-            word.save_as(copy_file_path, Office.Format.DOCX)
-    except (Exception, BaseException) as err:
-        og_file_path.unlink()
-        copy_file_path.rename(file_path)
-        raise err
-
-    og_file_path.unlink()
-    copy_file_path.rename(file_path)
-    return file_path
 
 
 def open_document(
@@ -107,7 +90,7 @@ def open_document(
                 logger.warning(
                     f"Failed to open document {file_path}. Attempting recovery..."
                 )
-                file_path = recover_document(file_path)
+                recover_docx(file_path=str(file_path))
 
                 try:
                     return Document(str(file_path))
@@ -168,7 +151,7 @@ class SubsidyDocument(DamuDocument):
             self.is_correct_type = True
             return self.is_correct_type
 
-        first_n_paras = "\n".join(self.paragraphs[0:10])
+        first_n_paras = "\n".join(self.paragraphs)
         self.is_correct_type = (
             RE_FILE_CONTENTS.search(first_n_paras) is not None
             and RE_WRONG_CONTENTS.search(first_n_paras) is None
@@ -222,13 +205,15 @@ class TableParser:
 
     @staticmethod
     def parse_table(
-        table: Table, filter_empty: bool = False
+        table: Table, filter_empty: bool = False, replace_newlines: bool = True
     ) -> list[list[str]]:
         table_data = []
         for row in table.rows:
             row_data = []
             for cell in row.cells:
-                text = cell.text.strip().replace("\n", "")
+                text = cell.text.strip()
+                if replace_newlines:
+                    text = text.replace("\n", "")
                 if filter_empty and not text:
                     continue
                 row_data.append(text)
@@ -384,14 +369,21 @@ class TableParser:
             df.loc[:, "debt_repayment_date"] = pd.to_datetime(
                 df.loc[:, "debt_repayment_date"], dayfirst=True, format="mixed"
             )
-        except (OutOfBoundsDatetime, ValueError) as err:
-            raise err
-
-        df["debt_repayment_date"] = df["debt_repayment_date"].astype(
-            "datetime64[ns]"
-        )
+        except DateParseError as err:
+            raise WrongDataInColumnError(
+                "Не удалось перевести даты в графике погашения в формат 'ДД.ММ.ГГГГ'"
+            ) from err
 
         try:
+            df["debt_repayment_date"] = df["debt_repayment_date"].astype(
+                "datetime64[ns]"
+            )
+        except DateParseError as err:
+            raise WrongDataInColumnError(
+                "Не удалось перевести даты в графике погашения в формат 'ДД.ММ.ГГГГ'"
+            ) from err
+
+        with suppress(Exception):
             if not all(
                 df.loc[0 : total_row_idx - 1, "principal_debt_balance"]
                 .astype("datetime64[ns]")
@@ -400,8 +392,6 @@ class TableParser:
                 raise WrongDataInColumnError(
                     "Не удалось перевести суммы в числовые значения. Даты в колонке под названием 'Сумма остатка основного долга'."
                 )
-        except Exception:
-            pass
 
         columns_to_process = [
             "principal_debt_balance",
@@ -425,7 +415,7 @@ class TableParser:
                 .astype("Int64")
             )
         except ValueError as err:
-            raise FloatConversionError() from ValueError
+            raise FloatConversionError() from err
 
         # df = df.where(pd.notna(df), None)
         df.reset_index(inplace=True, drop=True)
@@ -564,6 +554,66 @@ class SubsidyParser(Parser):
         self, document: SubsidyDocument, contract: ParseSubsidyContract
     ) -> None:
         super().__init__(document=document, contract=contract)
+
+    def find_contract_dates(self) -> tuple[date | None, date | None]:
+        for table in self.document.doc.tables:
+            parsed_table = self.table_parser.parse_table(table)
+            if not parsed_table:
+                continue
+
+            for row in parsed_table:
+                if not row[0].strip().lower().startswith("срок"):
+                    continue
+
+                s = row[1]
+
+                matches = RE_DATE.findall(s)
+                if matches and len(matches) == 2:
+                    contract_start_date_str, contract_end_date_str = matches
+                    try:
+                        contract_start_date, contract_end_date = (
+                            datetime.strptime(
+                                contract_start_date_str, "%d.%m.%Y"
+                            ),
+                            datetime.strptime(
+                                contract_end_date_str, "%d.%m.%Y"
+                            ),
+                        )
+                        return contract_start_date, contract_end_date
+                    except Exception as e:
+                        logger.exception(e)
+                        return None, None
+                else:
+                    s = re.sub(r"[«»\"']", "", s)
+                    matches = RE_COMPLEX_DATE.findall(s)
+
+                    if not matches or len(matches) != 2:
+                        return None, None
+
+                    st_day, st_month, st_year = matches[0][2:5]
+                    end_day, end_month, end_year = matches[1][2:5]
+
+                    st_month = MONTHS.get(st_month[0:3].lower())
+                    end_month = MONTHS.get(end_month[0:3].lower())
+
+                    contract_start_date_str = f"{st_day}.{st_month}.{st_year}"
+                    contract_end_date_str = f"{end_day}.{end_month}.{end_year}"
+
+                    try:
+                        contract_start_date, contract_end_date = (
+                            datetime.strptime(
+                                contract_start_date_str, "%d.%m.%Y"
+                            ),
+                            datetime.strptime(
+                                contract_end_date_str, "%d.%m.%Y"
+                            ),
+                        )
+                        return contract_start_date, contract_end_date
+                    except Exception as e:
+                        logger.exception(e)
+                        return None, None
+
+        return None, None
 
     def find_dbz(self) -> tuple[str | None, date | None]:
         dbz_data = None
@@ -841,6 +891,12 @@ class SubsidyParser(Parser):
         #     f"PARSE - dbz_id={self.contract.dbz_id!r}, dbz_date={self.contract.dbz_date!r}"
         # )
 
+        self.contract.contract_start_date, self.contract.contract_end_date = (
+            self.find_contract_dates()
+        )
+        logger.info(f"PARSE - {self.contract.contract_start_date=!r}")
+        logger.info(f"PARSE - {self.contract.contract_end_date=!r}")
+
         if not self.contract.iban:
             logger.error("PARSE - WARNING - IBAN not found")
             raise ValueError("IBANs not found...")
@@ -945,7 +1001,10 @@ class JoinParser(Parser):
             (
                 f
                 for f in document_folder.iterdir()
-                if f.name.endswith("pdf") and "заявлен" in f.name.lower()
+                if (fname := f.name.lower())
+                and fname.endswith("pdf")
+                and "заявлен" in fname
+                and "rus" in fname
             ),
             None,
         )
@@ -954,19 +1013,19 @@ class JoinParser(Parser):
                 "PDF файл 'Заявление получателя к договору присоединения' не найден"
             )
 
-        protocol_id = None
-        loan_amount = None
         reader = PdfReader(pdf_path)
 
         pat_rus, pat_kaz = (RE_JOIN_PROTOCOL_ID_RUS, RE_JOIN_PROTOCOL_ID_KAZ)
         pat_loan_amount = RE_JOIN_LOAN_AMOUNT
+        pat_protocol_id = re.compile(r"\b(\d{6})\b", re.IGNORECASE)
+        protocol_id = None
+        loan_amount = None
 
         for page in reader.pages:
             if protocol_id and loan_amount:
                 break
 
-            text = page.extract_text().replace("\n", " ")
-            text = re.sub(r"\s+", " ", text)
+            text = page.extract_text()
             if not text:
                 continue
 
@@ -974,6 +1033,12 @@ class JoinParser(Parser):
                 match := (pat_rus.search(text) or pat_kaz.search(text))
             ) is not None:
                 protocol_id = match.group(1)
+
+            is_correct_line = "омер и дата" in text
+            if is_correct_line:
+                match = pat_protocol_id.search(text)
+                if match:
+                    protocol_id = match.group(1)
 
             search1, search2 = (
                 text.find("умма кредита"),
@@ -989,64 +1054,80 @@ class JoinParser(Parser):
 
                 snippet = text[search_idx : search_idx + 100]
                 if (match := pat_loan_amount.search(snippet)) is not None:
-                    match_str = match.group(1).strip()
+                    match_str = match.group(1).strip().split("\n")[0]
                     if "," in match_str and "." in match_str:
                         match_str = match_str.rsplit(" ", maxsplit=1)[0]
 
                     loan_amount = float(
-                        match_str.replace(" ", "").replace(",", ".")
+                        re.sub(r"\s", "", match_str).replace(",", ".")
                     )
 
         if not protocol_id or not loan_amount:
-            temp_folder = Path("C:/Temp") / self.contract.contract_id
-            temp_folder.mkdir(exist_ok=True, parents=True)
+            temp_folder = os.path.join("C:/Temp", self.contract.contract_id)
+            os.makedirs(temp_folder, exist_ok=True)
 
-            output_txt_path = temp_folder / "output.txt"
-            if not output_txt_path.exists():
+            output_txt_path = os.path.join(temp_folder, "output.txt")
+            if not os.path.exists(output_txt_path):
                 ocrmypdf.ocr(
                     pdf_path,
-                    (temp_folder / "output.pdf"),
+                    os.path.join(temp_folder, "output.pdf"),
                     sidecar=output_txt_path,
                     language="eng+rus+kaz",
                     deskew=True,
                     force_ocr=True,
                 )
 
-            with output_txt_path.open(encoding="utf-8") as f:
-                for line in f.readlines():
-                    if protocol_id and loan_amount:
-                        break
+            with open(output_txt_path, "r", encoding="utf-8") as f:
+                lines = [
+                    line for l in f.readlines() if (line := l.strip().lower())
+                ]
 
-                    if not protocol_id:
-                        line = line.strip().lower()
-                        if (
-                            "номер и дата решения" in line
-                            or "аржы агент" in line
-                            and (match := RE_JOIN_PROTOCOL_ID_OCR.search(line))
-                            is not None
-                        ):
+            for idx, line in enumerate(lines):
+                if protocol_id and loan_amount:
+                    break
+
+                if not protocol_id:
+                    is_correct_line = (
+                        "номер и дата решения" in line or "аржы агент" in line
+                    )
+                    if is_correct_line:
+                        match = RE_JOIN_PROTOCOL_ID_OCR.search(line)
+                        if not match:
+                            match = RE_JOIN_PROTOCOL_ID_OCR.search(
+                                "\n".join(lines[idx : idx + 10])
+                            )
+
+                        if match:
                             protocol_id = match.group(1)
 
-                    if not loan_amount:
-                        search1, search2 = -1, -1
-                        if (search1 := line.find("умма кредита")) or (
-                            search2 := line.find("редит/лизинг сомасы")
-                        ):
-                            if search1 != -1 and search2 == -1:
-                                search_idx = search1
-                            elif search2 != -1 and search1 == -1:
-                                search_idx = search2
-                            else:
-                                continue
-                            snippet = line[search_idx : search_idx + 100]
-                            match = RE_JOIN_LOAN_AMOUNT.search(snippet)
-                            if match:
-                                loan_amount = float(
-                                    match.group(1)
-                                    .strip()
-                                    .replace(" ", "")
-                                    .replace(",", ".")
-                                )
+                if not loan_amount:
+                    search1, search2 = -1, -1
+                    if (search1 := line.find("умма кредита")) or (
+                        search2 := line.find("редит/лизинг сомасы")
+                    ):
+                        if search1 != -1 and search2 == -1:
+                            search_idx = search1
+                        elif search2 != -1 and search1 == -1:
+                            search_idx = search2
+                        else:
+                            continue
+                        snippet = line[search_idx : search_idx + 100]
+                        print(snippet)
+                        match = RE_JOIN_LOAN_AMOUNT.search(snippet)
+                        print(match)
+
+                        if not match:
+                            match = RE_JOIN_LOAN_AMOUNT.search(
+                                "\n".join(lines[idx : idx + 10])
+                            )
+
+                        if match:
+                            print(match)
+                            loan_amount = float(
+                                re.sub(
+                                    r"\s", "", match.group(1).strip()
+                                ).replace(",", ".")
+                            )
 
             if not protocol_id:
                 raise JoinProtocolNotFoundError(
@@ -1080,7 +1161,7 @@ class JoinParser(Parser):
                 try:
                     date_obj = datetime.strptime(date_str, "%d.%m.%Y").date()
                     dates.append(date_obj)
-                except ValueError as e:
+                except ValueError:
                     day, month, year = match.groups()[1:]
                     month = MONTHS.get(month[0:3])
                     fmt = "%d.%m.%y" if len(year) == 2 else "%d.%m.%Y"
@@ -1088,6 +1169,13 @@ class JoinParser(Parser):
                         f"{day}.{month}.{year}", fmt
                     ).date()
                     dates.append(date_obj)
+
+        if not dates:
+            raise DateNotFoundError(
+                file_name=self.document.file_path.name,
+                contract_id=self.contract.contract_id,
+                para="",
+            )
 
         if dates[1] > dates[0]:
             return dates[0], dates[1]
@@ -1121,9 +1209,6 @@ class JoinParser(Parser):
         if ibans:
             self.contract.iban = ibans[0]
 
-        # TODO ? сказали использовать номер и дату дс
-        # self.contract.dbz_id, self.contract.dbz_date = self.find_dbz()
-
         if not self.contract.iban:
             logger.error("PARSE - WARNING - IBAN not found")
             raise ValueError("IBANs not found...")
@@ -1142,6 +1227,17 @@ class JoinParser(Parser):
 
         dfs = self.table_parser.parse_tables(self.contract)
 
+        if len(dfs) > 0:
+            self.contract.contract_start_date = (
+                dfs[0].at[0, "debt_repayment_date"].date()
+            )
+            logger.info(f"PARSE - {self.contract.contract_start_date=!r}")
+
+            self.contract.contract_end_date = (
+                dfs[0]["debt_repayment_date"].dropna().iloc[-1].date()
+            )
+            logger.info(f"PARSE - {self.contract.contract_end_date=!r}")
+
         return dfs
 
 
@@ -1150,11 +1246,7 @@ def parse_document(
     contract_type: str,
     download_folder: Path,
     db: DatabaseManager,
-) -> ParseSubsidyContract:
-    contract = ParseSubsidyContract(
-        contract_id=contract_id, error=Error(contract_id=contract_id)
-    )
-
+) -> ParseSubsidyContract | ParseJoinContract:
     documents_folder = download_folder / contract_id / "documents"
 
     documents: list[SubsidyDocument | JoinDocument]
@@ -1162,11 +1254,17 @@ def parse_document(
         "Первый график к договору присоединения",
         "Транш к договору присоединения",
     ]:
+        contract_cls = ParseJoinContract
         document_cls = JoinDocument
         parser_cls = JoinParser
     else:
+        contract_cls = ParseSubsidyContract
         document_cls = SubsidyDocument
         parser_cls = SubsidyParser
+
+    contract = contract_cls(
+        contract_id=contract_id, error=Error(contract_id=contract_id)
+    )
 
     try:
         documents = [

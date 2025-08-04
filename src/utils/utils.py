@@ -1,19 +1,99 @@
+from __future__ import annotations
+
 import io
 import logging
+import os
 import re
 import shutil
 import zipfile
-from collections.abc import Callable
 from datetime import date, datetime, timedelta
-from pathlib import Path
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
+import httpx
 import pandas as pd
 import psutil
 import pytz
 
+if TYPE_CHECKING:
+    from typing import Any, BinaryIO, Literal
+    from pathlib import Path
+    from collections.abc import Callable
 
 logger = logging.getLogger("DAMU")
+
+
+class TelegramAPI:
+    def __init__(self, process_name: Literal["sve", "zan"]) -> None:
+        self.client = httpx.Client()
+        self.token, self.chat_id = os.environ["TOKEN"], os.environ["CHAT_ID"]
+        self.api_url = f"https://api.telegram.org/bot{self.token}/"
+
+        self.pending_messages: list[str] = []
+
+        self.process_name = process_name
+
+    def reload_session(self) -> None:
+        self.client.close()
+        self.client = httpx.Client()
+
+    def send_message(
+        self,
+        message: str | None = None,
+        use_session: bool = True,
+        use_md: bool = False,
+    ) -> bool:
+        send_data: dict[str, str | None] = {"chat_id": self.chat_id}
+
+        if use_md:
+            send_data["parse_mode"] = "MarkdownV2"
+
+        pending_message = "\n".join(self.pending_messages)
+        if pending_message:
+            message = f"{pending_message}\n{message}"
+
+        url = urljoin(self.api_url, "sendMessage")
+        send_data["text"] = f"{self.process_name.upper()} - {message}"
+
+        status_code = 0
+
+        try:
+            if use_session:
+                response = self.client.post(url, data=send_data, timeout=10)
+            else:
+                response = httpx.post(url, data=send_data, timeout=10)
+
+            data = "" if not hasattr(response, "json") else response.json()
+            status_code = response.status_code
+            logger.debug(f"{status_code=}, {data=}")
+            response.raise_for_status()
+
+            if status_code == 200:
+                self.pending_messages = []
+                return True
+
+            return False
+        except httpx.HTTPError as err:
+            if status_code == 429 and message:
+                self.pending_messages.append(message)
+
+            logger.exception(err)
+            return False
+
+    def send_with_retry(self, message: str) -> bool:
+        retry = 0
+        while retry < 5:
+            try:
+                use_session = retry < 5
+                success = self.send_message(message, use_session)
+                return success
+            except httpx.HTTPError as e:
+                self.reload_session()
+                logger.exception(e)
+                logger.warning(f"{e} intercepted. Retry {retry + 1}/10")
+                retry += 1
+
+        return False
 
 
 def kill_all_processes(proc_name: str) -> None:
@@ -48,8 +128,7 @@ def safe_extract(archive_path: Path, documents_folder: Path) -> None:
 
     with archive:
         for file in archive.namelist():
-            file_path = Path(file)
-            file_name = file_path.name
+            file_name = os.path.basename(file)
 
             if file_name.lower().endswith("docx"):
                 continue

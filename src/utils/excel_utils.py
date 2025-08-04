@@ -1,10 +1,13 @@
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Generator
+from typing import TYPE_CHECKING
 
 import win32com.client as win32
 
-from zanesenie.utils.utils import kill_all_processes
+from utils.utils import kill_all_processes
+
+if TYPE_CHECKING:
+    from typing import Generator
+    from pathlib import Path
 
 
 @contextmanager

@@ -3,17 +3,19 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
-from collections.abc import Generator
 from contextlib import contextmanager
-from enum import StrEnum
-from pathlib import Path
-from types import TracebackType
-from typing import Any, ContextManager, Literal, Type, cast, overload
+from typing import TYPE_CHECKING, overload, cast
+
+if TYPE_CHECKING:
+    from typing import Any, ContextManager, Literal, Type
+    from pathlib import Path
+    from collections.abc import Generator
+    from types import TracebackType
+
+    SqlParams = tuple[Any, ...] | dict[str, Any] | None
+
 
 logger = logging.getLogger("DAMU")
-
-
-SqlParams = tuple[Any, ...] | dict[str, Any] | None
 
 
 class DatabaseManager:
@@ -43,7 +45,7 @@ class DatabaseManager:
     ) -> tuple[Any, ...]:
         with self.connect() as cursor:
             cursor.execute(query, params or ())
-            return cast(tuple[Any, ...], cursor.fetchone())
+            return cast(tuple["Any", ...], cursor.fetchone())
 
     def fetch_all(
         self, query: str, params: SqlParams = None
@@ -118,6 +120,8 @@ class DatabaseManager:
                 settlement_date INTEGER,
                 start_date TEXT,
                 end_date TEXT,
+                contract_start_date TEXT,
+                contract_end_date TEXT,
                 loan_amount REAL,
                 subsid_amount REAL,
                 investment_amount REAL,
@@ -136,7 +140,8 @@ class DatabaseManager:
                 customer_id TEXT,
                 bank_id TEXT,
                 bank TEXT,
-                year_count INTEGER
+                year_count INTEGER,
+                region TEXT
             )
         """)
 
@@ -178,11 +183,10 @@ class DatabaseManager:
         """)
 
         self.request("""
-            CREATE TABLE IF NOT EXISTS errors (
+            CREATE TABLE IF NOT EXISTS results (
                 id TEXT NOT NULL PRIMARY KEY,
                 modified TEXT DEFAULT (datetime('now','localtime')),
-                traceback TEXT,
-                human_readable TEXT,
+                result INTEGER,
                 FOREIGN KEY (id) REFERENCES contracts (id)
             )
         """)

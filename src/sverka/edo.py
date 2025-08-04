@@ -1,20 +1,27 @@
+from __future__ import annotations
+
 import dataclasses
 import logging
 import random
 import re
 import time
 from datetime import datetime
-from pathlib import Path
-from types import TracebackType
-from typing import Type, cast, override
+from typing import TYPE_CHECKING, cast, override
+
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, SoupStrainer, Tag
 
 from sverka.error import LoginError
 from sverka.subsidy import EdoContract
-from utils.db_manager import DatabaseManager
 from utils.request_handler import RequestHandler
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from types import TracebackType
+    from typing import Type
+    from utils.db_manager import DatabaseManager
+
 
 logger = logging.getLogger("DAMU")
 
@@ -263,6 +270,36 @@ class EDO(RequestHandler):
 
         response_msg = cast(str, response_data.get("message", "").strip())
         return response_msg == "Выполнена задача: Исполнить"
+
+    def mark_as_filled(self, contract_id: str) -> bool:
+        if not self.is_logged_in:
+            self.login()
+
+        data = {
+            "msf_id": f"workflow:beff8bc1-14fd-4657-86f1-55797181018f:{contract_id}",
+            "f_81da271[true]": "Да",
+        }
+
+        response = self.request(
+            method="post",
+            path=f"workflow/document/record/beff8bc1-14fd-4657-86f1-55797181018f/{contract_id}/t_4166844",
+            data=data,
+        )
+        if not response:
+            logger.error("Request failed")
+            raise LoginError("Robot was unable to login into the EDO...")
+
+        if not hasattr(response, "json"):
+            logger.error("Request failed")
+            raise LoginError("Robot was unable to login into the EDO...")
+
+        response_data = response.json()
+        logger.debug(f"raw_response={response_data!r}")
+
+        response_msg = cast(str, response_data.get("message", "").strip())
+        res = response_msg == "Успешно записано"
+
+        return res
 
     def mark_as_read(self, task_id: str) -> bool:
         if not task_id:

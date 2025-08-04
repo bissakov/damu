@@ -1,6 +1,6 @@
 from collections.abc import Callable, Generator
 from time import sleep, time
-from typing import Any, Literal, NewType, TypeAlias, TypeVar, cast, overload
+from typing import Any, Literal, NewType, TypeVar, cast, overload
 
 from _ctypes import COMError
 from pywinauto import Application, WindowSpecification, keyboard
@@ -89,22 +89,21 @@ UiaMenu = _MenuWindowSpecification | _UIAMenuWrapper
 UiaMenuItem = _MenuItemWindowSpecification | _UIAMenuItemWrapper
 UiaToolbar = _ToolbarWindowSpecification | _UIAToolbarWrapper
 
-UiaElement: TypeAlias = (
-    WindowSpecification
-    | _UIAWrapper
-    | _ButtonWrapper
-    | _CheckBoxWrapper
-    | _UIACustomWrapper
-    | _UIADocumentWrapper
-    | _EditWrapper
-    | _ListViewWrapper
-    | _ListItemWrapper
-    | _UIAPaneWrapper
-    | _UIATabItemWrapper
-    | _UIATableWrapper
-    | _UIAMenuWrapper
-    | _UIAMenuItemWrapper
-    | _UIAToolbarWrapper
+UiaElement = TypeVar(
+    "UiaElement",
+    UiaWindow,
+    UiaButton,
+    UiaCheckBox,
+    UiaCustom,
+    UiaDocument,
+    UiaEdit,
+    UiaList,
+    UiaListItem,
+    UiaPane,
+    UiaTabItem,
+    UiaTable,
+    UiaMenu,
+    UiaMenuItem,
 )
 
 
@@ -114,91 +113,91 @@ def child(
     ctrl: Literal["Button"],
     title: str | None = None,
     idx: int = 0,
-) -> _ButtonWindowSpecification | _ButtonWrapper: ...
+) -> UiaButton: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["CheckBox"],
     title: str | None = None,
     idx: int = 0,
-) -> _CheckBoxWindowSpecification | _CheckBoxWrapper: ...
+) -> UiaCheckBox: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Custom"],
     title: str | None = None,
     idx: int = 0,
-) -> _CustomWindowSpecification | _UIACustomWrapper: ...
+) -> UiaCustom: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Document"],
     title: str | None = None,
     idx: int = 0,
-) -> _DocumentWindowSpecification | _UIADocumentWrapper: ...
+) -> UiaDocument: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Edit"],
     title: str | None = None,
     idx: int = 0,
-) -> _EditWindowSpecification | _EditWrapper: ...
+) -> UiaEdit: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["List"],
     title: str | None = None,
     idx: int = 0,
-) -> _ListWindowSpecification | _ListViewWrapper: ...
+) -> UiaList: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["ListItem"],
     title: str | None = None,
     idx: int = 0,
-) -> _ListItemWindowSpecification | _ListItemWrapper: ...
+) -> UiaListItem: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Pane"],
     title: str | None = None,
     idx: int = 0,
-) -> _PaneWindowSpecification | _UIAPaneWrapper: ...
+) -> UiaPane: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["TabItem"],
     title: str | None = None,
     idx: int = 0,
-) -> _TabItemWindowSpecification | _UIATabItemWrapper: ...
+) -> UiaTabItem: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Table"],
     title: str | None = None,
     idx: int = 0,
-) -> _TableWindowSpecification | _UIATableWrapper: ...
+) -> UiaTable: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Menu"],
     title: str | None = None,
     idx: int = 0,
-) -> _MenuWindowSpecification | _UIAMenuWrapper: ...
+) -> UiaMenu: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["MenuItem"],
     title: str | None = None,
     idx: int = 0,
-) -> _MenuItemWindowSpecification | _UIAMenuItemWrapper: ...
+) -> UiaMenuItem: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["ToolBar"],
     title: str | None = None,
     idx: int = 0,
-) -> _ToolbarWindowSpecification | _UIAToolbarWrapper: ...
+) -> UiaToolbar: ...
 
 
 def child(
@@ -226,13 +225,11 @@ def child(
     )
 
 
-def window(
-    app: Application, title: str, regex: bool = False
-) -> WindowSpecification:
+def window(app: Application, title: str, regex: bool = False) -> UiaWindow:
     if regex:
-        return cast(WindowSpecification, app.window(title_re=title))
+        return cast(UiaWindow, app.window(title_re=title))
     else:
-        return cast(WindowSpecification, app.window(title=title))
+        return cast(UiaWindow, app.window(title=title))
 
 
 def focus(element: UiaElement) -> None:
@@ -241,19 +238,16 @@ def focus(element: UiaElement) -> None:
         cast(WindowSpecification, element).wait(wait_for="active visible")
 
 
-def a(main_win: WindowSpecification, action: Callable[[], None]) -> None:
+def a(main_win: UiaWindow, action: Callable[[], None]) -> None:
     focus(main_win)
     action()
 
 
 def click(
-    main_win: WindowSpecification,
-    element: UiaElement,
-    button: Literal["left", "right", "middle"] = "left",
-    double: bool = False,
+    main_win: UiaWindow, element: UiaElement, double: bool = False
 ) -> None:
     focus(main_win)
-    element.click_input(button=button, double=double)
+    element.click_input(double=double)
 
 
 def _click(element: UiaElement, double: bool = False) -> None:
@@ -262,22 +256,13 @@ def _click(element: UiaElement, double: bool = False) -> None:
 
 
 @overload
-def iter_children(
-    parent: _ListWindowSpecification | _ListViewWrapper,
-) -> Generator[_ListItemWindowSpecification | _ListItemWrapper]: ...
+def iter_children(parent: UiaList) -> Generator[UiaListItem]: ...
+@overload
+def iter_children(parent: UiaTable) -> Generator[UiaCustom]: ...
 @overload
 def iter_children(
-    parent: _TableWindowSpecification | _UIATableWrapper,
-) -> Generator[_CustomWindowSpecification | _UIACustomWrapper]: ...
-@overload
-def iter_children(
-    parent: _MenuWindowSpecification
-    | _UIAMenuWrapper
-    | _MenuItemWindowSpecification
-    | _UIAMenuItemWrapper,
-) -> Generator[
-    _MenuItemWindowSpecification | _UIAMenuItemWrapper, None, None
-]: ...
+    parent: UiaMenu | UiaMenuItem,
+) -> Generator[UiaMenuItem, None, None]: ...
 @overload
 def iter_children(parent: UiaElement) -> Generator[UiaElement]: ...
 
@@ -286,9 +271,7 @@ def iter_children(parent):
     return parent.iter_children()
 
 
-def children(
-    parent: _ListWindowSpecification | _ListViewWrapper,
-) -> list[_ListItemWindowSpecification | _ListItemWrapper]:
+def children(parent: UiaList) -> list[UiaListItem]:
     return parent.children()
 
 
@@ -313,15 +296,13 @@ def wait(
     return _wait_for(lambda: method(), timeout=timeout, interval=interval)
 
 
-def menu_select(
-    menu: _MenuWindowSpecification | _UIAMenuWrapper, menu_names: list[str]
-) -> None:
+def menu_select(menu: UiaMenu, menu_names: list[str]) -> None:
     for menu_name in menu_names:
         child(menu, ctrl="MenuItem", title=menu_name).click_input()
 
 
 def menu_select_1c(
-    win: WindowSpecification,
+    win: UiaWindow,
     parent_element: UiaElement,
     trigger_btn_name: str,
     menu_names: list[str],
@@ -332,17 +313,14 @@ def menu_select_1c(
 
 
 def send_keys(
-    win: WindowSpecification,
-    keystrokes: str,
-    pause: float = 0.05,
-    spaces: bool = False,
+    win: UiaWindow, keystrokes: str, pause: float = 0.05, spaces: bool = False
 ) -> None:
     focus(win)
     keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
 
 
 def click_type(
-    win: WindowSpecification,
+    win: UiaWindow,
     element: UiaElement,
     keystrokes: str,
     delay: float = 0.1,
@@ -352,7 +330,6 @@ def click_type(
     ent: bool = False,
     spaces: bool = False,
     escape_chars: bool = False,
-    coords: tuple[int, int] | None = None,
 ) -> None:
     focus(win)
 
@@ -369,18 +346,15 @@ def click_type(
     if ent:
         keystrokes = keystrokes + "{ENTER}+{TAB}"
 
-    if not coords:
-        coords = (None, None)
-
     if double:
-        element.double_click_input(coords=coords)
+        element.double_click_input()
     else:
-        element.click_input(coords=coords)
+        element.click_input()
     sleep(delay)
     keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
 
 
-def check(checkbox: _CheckBoxWindowSpecification | _CheckBoxWrapper) -> None:
+def check(checkbox: UiaCheckBox) -> None:
     if checkbox.get_toggle_state() == 0:
         checkbox.toggle()
 
