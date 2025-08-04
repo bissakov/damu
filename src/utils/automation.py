@@ -1,110 +1,82 @@
-from collections.abc import Callable, Generator
+from __future__ import annotations
+
+import os
 from time import sleep, time
-from typing import Any, Literal, NewType, TypeVar, cast, overload
+from typing import cast, overload, TYPE_CHECKING
 
 from _ctypes import COMError
-from pywinauto import Application, WindowSpecification, keyboard
-from pywinauto.controls.uia_controls import (
-    ButtonWrapper,
-    EditWrapper,
-    ListItemWrapper,
-    ListViewWrapper,
-    MenuItemWrapper,
-    MenuWrapper,
-    ToolbarWrapper,
-)
-from pywinauto.controls.uiawrapper import UIAWrapper
-
-_WindowWindowSpecification = NewType(
-    "_WindowWindowSpecification", WindowSpecification
-)
-_ButtonWindowSpecification = NewType(
-    "_ButtonWindowSpecification", WindowSpecification
-)
-_CheckBoxWindowSpecification = NewType(
-    "_CheckBoxWindowSpecification", WindowSpecification
-)
-_CustomWindowSpecification = NewType(
-    "_CustomWindowSpecification", WindowSpecification
-)
-_DocumentWindowSpecification = NewType(
-    "_DocumentWindowSpecification", WindowSpecification
-)
-_EditWindowSpecification = NewType(
-    "_EditWindowSpecification", WindowSpecification
-)
-_ListWindowSpecification = NewType(
-    "_ListWindowSpecification", WindowSpecification
-)
-_ListItemWindowSpecification = NewType(
-    "_ListItemWindowSpecification", WindowSpecification
-)
-_PaneWindowSpecification = NewType(
-    "_PaneWindowSpecification", WindowSpecification
-)
-_TabItemWindowSpecification = NewType(
-    "_TabItemWindowSpecification", WindowSpecification
-)
-_TableWindowSpecification = NewType(
-    "_TableWindowSpecification", WindowSpecification
-)
-_MenuWindowSpecification = NewType(
-    "_MenuWindowSpecification", WindowSpecification
-)
-_MenuItemWindowSpecification = NewType(
-    "_MenuItemWindowSpecification", WindowSpecification
-)
-_ToolbarWindowSpecification = NewType(
-    "_ToolbarWindowSpecification", WindowSpecification
-)
-
-_UIAWrapper = NewType("_UIAWrapper", UIAWrapper)
-_ButtonWrapper = NewType("_ButtonWrapper", ButtonWrapper)
-_CheckBoxWrapper = NewType("_CheckBoxWrapper", ButtonWrapper)
-_UIACustomWrapper = NewType("_UIACustomWrapper", UIAWrapper)
-_UIADocumentWrapper = NewType("_UIADocumentWrapper", UIAWrapper)
-_EditWrapper = NewType("_EditWrapper", EditWrapper)
-_ListViewWrapper = NewType("_ListViewWrapper", ListViewWrapper)
-_ListItemWrapper = NewType("_ListItemWrapper", ListItemWrapper)
-_UIAPaneWrapper = NewType("_UIAPaneWrapper", UIAWrapper)
-_UIATabItemWrapper = NewType("_UIATabItemWrapper", UIAWrapper)
-_UIATableWrapper = NewType("_UIATableWrapper", ListViewWrapper)
-_UIAMenuWrapper = NewType("_UIAMenuWrapper", MenuWrapper)
-_UIAMenuItemWrapper = NewType("_UIAMenuItemWrapper", MenuItemWrapper)
-_UIAToolbarWrapper = NewType("_UIAToolbarWrapper", ToolbarWrapper)
+from pywinauto import Application, keyboard
 
 
-UiaWindow = _WindowWindowSpecification | _UIAWrapper
-UiaButton = _ButtonWindowSpecification | _ButtonWrapper
-UiaCheckBox = _CheckBoxWindowSpecification | _CheckBoxWrapper
-UiaCustom = _CustomWindowSpecification | _UIACustomWrapper
-UiaDocument = _DocumentWindowSpecification | _UIADocumentWrapper
-UiaEdit = _EditWindowSpecification | _EditWrapper
-UiaList = _ListWindowSpecification | _ListViewWrapper
-UiaListItem = _ListItemWindowSpecification | _ListItemWrapper
-UiaPane = _PaneWindowSpecification | _UIAPaneWrapper
-UiaTabItem = _TabItemWindowSpecification | _UIATabItemWrapper
-UiaTable = _TableWindowSpecification | _UIATableWrapper
-UiaMenu = _MenuWindowSpecification | _UIAMenuWrapper
-UiaMenuItem = _MenuItemWindowSpecification | _UIAMenuItemWrapper
-UiaToolbar = _ToolbarWindowSpecification | _UIAToolbarWrapper
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
+    from typing import Any, Literal, NewType, TypeAlias
 
-UiaElement = TypeVar(
-    "UiaElement",
-    UiaWindow,
-    UiaButton,
-    UiaCheckBox,
-    UiaCustom,
-    UiaDocument,
-    UiaEdit,
-    UiaList,
-    UiaListItem,
-    UiaPane,
-    UiaTabItem,
-    UiaTable,
-    UiaMenu,
-    UiaMenuItem,
-)
+    from pywinauto import WindowSpecification
+
+    from pywinauto.controls.uia_controls import (
+        ButtonWrapper as _ButtonWrapper,
+        EditWrapper as _EditWrapper,
+        ListItemWrapper as _ListItemWrapper,
+        ListViewWrapper as _ListViewWrapper,
+        MenuItemWrapper as _MenuItemWrapper,
+        MenuWrapper as _MenuWrapper,
+        ToolbarWrapper as _ToolbarWrapper,
+        TabControlWrapper as _TabControlWrapper,
+    )
+    from pywinauto.controls.uiawrapper import UIAWrapper as _UIAWrapper
+
+    UIAWrapper = NewType("UIAWrapper", _UIAWrapper)
+    ButtonWrapper = NewType("ButtonWrapper", _ButtonWrapper)
+    CheckBoxWrapper = NewType("CheckBoxWrapper", _ButtonWrapper)
+    UIACustomWrapper = NewType("UIACustomWrapper", _UIAWrapper)
+    UIADocumentWrapper = NewType("UIADocumentWrapper", _UIAWrapper)
+    EditWrapper = NewType("EditWrapper", _EditWrapper)
+    ListViewWrapper = NewType("ListViewWrapper", _ListViewWrapper)
+    ListItemWrapper = NewType("ListItemWrapper", _ListItemWrapper)
+    UIAPaneWrapper = NewType("UIAPaneWrapper", _UIAWrapper)
+    UIATabWrapper = NewType("UIATabWrapper", _TabControlWrapper)
+    UIATabItemWrapper = NewType("UIATabItemWrapper", _UIAWrapper)
+    UIATableWrapper = NewType("UIATableWrapper", _ListViewWrapper)
+    UIAMenuWrapper = NewType("UIAMenuWrapper", _MenuWrapper)
+    UIAMenuItemWrapper = NewType("UIAMenuItemWrapper", _MenuItemWrapper)
+    UIAToolbarWrapper = NewType("UIAToolbarWrapper", _ToolbarWrapper)
+
+    UiaElement: TypeAlias = (
+        WindowSpecification
+        | UIAWrapper
+        | ButtonWrapper
+        | CheckBoxWrapper
+        | UIACustomWrapper
+        | UIADocumentWrapper
+        | EditWrapper
+        | ListViewWrapper
+        | ListItemWrapper
+        | UIAPaneWrapper
+        | UIATabWrapper
+        | UIATabItemWrapper
+        | UIATableWrapper
+        | UIAMenuWrapper
+        | UIAMenuItemWrapper
+        | UIAToolbarWrapper
+    )
+else:
+    UIAWrapper = object
+    ButtonWrapper = object
+    CheckBoxWrapper = object
+    UIACustomWrapper = object
+    UIADocumentWrapper = object
+    EditWrapper = object
+    ListViewWrapper = object
+    ListItemWrapper = object
+    UIAPaneWrapper = object
+    UIATabWrapper = object
+    UIATabItemWrapper = object
+    UIATableWrapper = object
+    UIAMenuWrapper = object
+    UIAMenuItemWrapper = object
+    UIAToolbarWrapper = object
+    UiaElement = object
 
 
 @overload
@@ -113,91 +85,98 @@ def child(
     ctrl: Literal["Button"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaButton: ...
+) -> WindowSpecification | _ButtonWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["CheckBox"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaCheckBox: ...
+) -> WindowSpecification | CheckBoxWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Custom"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaCustom: ...
+) -> WindowSpecification | UIACustomWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Document"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaDocument: ...
+) -> WindowSpecification | UIADocumentWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Edit"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaEdit: ...
+) -> WindowSpecification | EditWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["List"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaList: ...
+) -> WindowSpecification | ListViewWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["ListItem"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaListItem: ...
+) -> WindowSpecification | ListItemWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Pane"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaPane: ...
+) -> WindowSpecification | UIAPaneWrapper: ...
+@overload
+def child(
+    parent: UiaElement,
+    ctrl: Literal["Tab"],
+    title: str | None = None,
+    idx: int = 0,
+) -> WindowSpecification | UIATabWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["TabItem"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaTabItem: ...
+) -> WindowSpecification | UIATabItemWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Table"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaTable: ...
+) -> WindowSpecification | UIATableWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["Menu"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaMenu: ...
+) -> WindowSpecification | UIAMenuWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["MenuItem"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaMenuItem: ...
+) -> WindowSpecification | UIAMenuItemWrapper: ...
 @overload
 def child(
     parent: UiaElement,
     ctrl: Literal["ToolBar"],
     title: str | None = None,
     idx: int = 0,
-) -> UiaToolbar: ...
+) -> WindowSpecification | UIAToolbarWrapper: ...
 
 
 def child(
@@ -211,6 +190,7 @@ def child(
         "List",
         "ListItem",
         "Pane",
+        "Tab",
         "TabItem",
         "Table",
         "Menu",
@@ -220,34 +200,39 @@ def child(
     title: str | None = None,
     idx: int = 0,
 ) -> Any:
-    return cast(WindowSpecification, parent).child_window(
+    return cast("WindowSpecification", parent).child_window(
         title=title, control_type=ctrl, found_index=idx
     )
 
 
-def window(app: Application, title: str, regex: bool = False) -> UiaWindow:
+def window(
+    app: Application, title: str, regex: bool = False
+) -> WindowSpecification:
     if regex:
-        return cast(UiaWindow, app.window(title_re=title))
+        return cast("WindowSpecification", app.window(title_re=title))
     else:
-        return cast(UiaWindow, app.window(title=title))
+        return cast("WindowSpecification", app.window(title=title))
 
 
 def focus(element: UiaElement) -> None:
     if not element.is_active():
         element.set_focus()
-        cast(WindowSpecification, element).wait(wait_for="active visible")
+        cast("WindowSpecification", element).wait(wait_for="active visible")
 
 
-def a(main_win: UiaWindow, action: Callable[[], None]) -> None:
+def a(main_win: WindowSpecification, action: Callable[[], None]) -> None:
     focus(main_win)
     action()
 
 
 def click(
-    main_win: UiaWindow, element: UiaElement, double: bool = False
+    main_win: WindowSpecification,
+    element: UiaElement,
+    button: Literal["left", "right", "middle"] = "left",
+    double: bool = False,
 ) -> None:
     focus(main_win)
-    element.click_input(double=double)
+    element.click_input(button=button, double=double)
 
 
 def _click(element: UiaElement, double: bool = False) -> None:
@@ -256,13 +241,20 @@ def _click(element: UiaElement, double: bool = False) -> None:
 
 
 @overload
-def iter_children(parent: UiaList) -> Generator[UiaListItem]: ...
-@overload
-def iter_children(parent: UiaTable) -> Generator[UiaCustom]: ...
+def iter_children(
+    parent: WindowSpecification | ListViewWrapper,
+) -> Generator[WindowSpecification | ListItemWrapper]: ...
 @overload
 def iter_children(
-    parent: UiaMenu | UiaMenuItem,
-) -> Generator[UiaMenuItem, None, None]: ...
+    parent: WindowSpecification | UIATableWrapper,
+) -> Generator[WindowSpecification | UIACustomWrapper]: ...
+@overload
+def iter_children(
+    parent: WindowSpecification
+    | UIAMenuWrapper
+    | WindowSpecification
+    | UIAMenuItemWrapper,
+) -> Generator[WindowSpecification | UIAMenuItemWrapper, None, None]: ...
 @overload
 def iter_children(parent: UiaElement) -> Generator[UiaElement]: ...
 
@@ -271,7 +263,9 @@ def iter_children(parent):
     return parent.iter_children()
 
 
-def children(parent: UiaList) -> list[UiaListItem]:
+def children(
+    parent: WindowSpecification | ListViewWrapper,
+) -> list[WindowSpecification | ListItemWrapper]:
     return parent.children()
 
 
@@ -296,31 +290,42 @@ def wait(
     return _wait_for(lambda: method(), timeout=timeout, interval=interval)
 
 
-def menu_select(menu: UiaMenu, menu_names: list[str]) -> None:
-    for menu_name in menu_names:
-        child(menu, ctrl="MenuItem", title=menu_name).click_input()
-
-
 def menu_select_1c(
-    win: UiaWindow,
-    parent_element: UiaElement,
-    trigger_btn_name: str,
-    menu_names: list[str],
+    win: WindowSpecification, parent_element: UiaElement, trigger_btn_name: str
 ) -> None:
     click(win, child(parent_element, ctrl="Button", title=trigger_btn_name))
     menu = child(win, ctrl="Menu")
-    menu_select(menu, menu_names)
+
+    item_selected = False
+    for ch in iter_children(menu):
+        if not ch.is_enabled():
+            continue
+
+        click(win, ch)
+
+        for item in iter_children(menu):
+            if not item.is_enabled():
+                continue
+            click(win, item)
+            item_selected = True
+            break
+
+        if item_selected:
+            break
 
 
 def send_keys(
-    win: UiaWindow, keystrokes: str, pause: float = 0.05, spaces: bool = False
+    win: WindowSpecification,
+    keystrokes: str,
+    pause: float = 0.05,
+    spaces: bool = False,
 ) -> None:
     focus(win)
     keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
 
 
 def click_type(
-    win: UiaWindow,
+    win: WindowSpecification,
     element: UiaElement,
     keystrokes: str,
     delay: float = 0.1,
@@ -330,6 +335,7 @@ def click_type(
     ent: bool = False,
     spaces: bool = False,
     escape_chars: bool = False,
+    coords: tuple[int, int] | None = None,
 ) -> None:
     focus(win)
 
@@ -346,21 +352,24 @@ def click_type(
     if ent:
         keystrokes = keystrokes + "{ENTER}+{TAB}"
 
+    if not coords:
+        coords = (None, None)
+
     if double:
-        element.double_click_input()
+        element.double_click_input(coords=coords)
     else:
-        element.click_input()
+        element.click_input(coords=coords)
     sleep(delay)
     keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
 
 
-def check(checkbox: UiaCheckBox) -> None:
+def check(checkbox: WindowSpecification | CheckBoxWrapper) -> None:
     if checkbox.get_toggle_state() == 0:
         checkbox.toggle()
 
 
 def exists(element: UiaElement) -> bool:
-    return cast(WindowSpecification, element).exists()
+    return cast("WindowSpecification", element).exists()
 
 
 def contains_text(element: UiaElement) -> bool:
@@ -465,3 +474,7 @@ def print_element_tree(
 def outline(element: UiaElement) -> None:
     focus(element)
     element.draw_outline()
+
+
+def switch_backend(backend: Literal["uia", "win32"]) -> Application:
+    return Application(backend=backend).connect(path=os.environ["ONE_C_PATH"])

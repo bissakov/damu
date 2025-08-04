@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ast
 import io
 import itertools
@@ -5,30 +7,30 @@ import logging
 import re
 import traceback
 from collections import defaultdict
-from collections.abc import Callable, Generator
 from datetime import datetime
-from pathlib import Path
-from typing import NamedTuple, cast
+from typing import cast, TYPE_CHECKING, NamedTuple
 
 import numpy as np
-import openpyxl
-import openpyxl.styles
-import openpyxl.utils
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, Alignment
 import pandas as pd
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.worksheet import Worksheet
-from pandas._typing import WriteExcelBuffer
 
 from sverka import macro_formulas
 from sverka.error import (
     BalanceAfterRepaymentFalseValueError,
     BankExcelMismatchError,
-    BankNotSupportedError,
     TotalFalseValueError,
 )
 from sverka.structures import COLUMN_MAPPING
 from sverka.subsidy import Error, SubsidyContract
-from utils.db_manager import DatabaseManager
+
+if TYPE_CHECKING:
+    from openpyxl.worksheet.worksheet import Worksheet
+    from utils.db_manager import DatabaseManager
+    from pathlib import Path
+    from collections.abc import Callable, Generator
+
 
 logger = logging.getLogger("DAMU")
 
@@ -44,7 +46,7 @@ def df_to_bytes(df: pd.DataFrame) -> bytes:
         return buffer.getvalue()
 
 
-def wb_to_bytes(wb: openpyxl.Workbook) -> bytes:
+def wb_to_bytes(wb: Workbook) -> bytes:
     with io.BytesIO() as buffer:
         wb.save(buffer)
         return buffer.getvalue()
@@ -172,7 +174,7 @@ def clear_range(ws: Worksheet, cell_range: str) -> None:
             cell.value = None
 
 
-def format_style_save(original_df: pd.DataFrame) -> openpyxl.Workbook:
+def format_style_save(original_df: pd.DataFrame) -> Workbook:
     df_excel_buffer = io.BytesIO()
 
     df: pd.DataFrame = original_df.copy()
@@ -180,25 +182,23 @@ def format_style_save(original_df: pd.DataFrame) -> openpyxl.Workbook:
     df = df.loc[:, list(COLUMN_MAPPING.keys())]
     df.rename(columns=COLUMN_MAPPING, inplace=True)
 
-    with pd.ExcelWriter(
-        cast(WriteExcelBuffer, df_excel_buffer), engine="openpyxl"
-    ) as writer:
+    with pd.ExcelWriter(df_excel_buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Sheet1")
 
     df_excel_buffer.seek(0)
 
-    workbook = openpyxl.load_workbook(df_excel_buffer)
+    workbook = load_workbook(df_excel_buffer)
     ws = workbook.worksheets[0]
 
-    font = openpyxl.styles.Font(size=10)
-    bold_font = openpyxl.styles.Font(size=10, bold=True)
-    header_alignment = openpyxl.styles.Alignment(
+    font = Font(size=10)
+    bold_font = Font(size=10, bold=True)
+    header_alignment = Alignment(
         wrap_text=True, vertical="center", horizontal="center"
     )
-    header_font = openpyxl.styles.Font(bold=True)
+    header_font = Font(bold=True)
 
     for col_idx in range(1, len(df.columns) + 1):
-        column_letter = openpyxl.utils.get_column_letter(col_idx)
+        column_letter = get_column_letter(col_idx)
         ws.column_dimensions[column_letter].width = 15
         header_cell = ws.cell(row=1, column=col_idx)
         header_cell.alignment = header_alignment
@@ -260,7 +260,7 @@ def shift_workbook(
     rows: int,
     cols: int,
     documents_folder: Path,
-) -> openpyxl.Workbook:
+) -> Workbook:
     if "total" in source_df:
         df: pd.DataFrame = source_df.loc[~source_df["total"]].copy()
         df.drop("total", axis=1, inplace=True)
@@ -318,15 +318,13 @@ def shift_workbook(
     df.rename(columns=COLUMN_MAPPING, inplace=True)
 
     df_excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(
-        cast(WriteExcelBuffer, df_excel_buffer), engine="openpyxl"
-    ) as writer:
+    with pd.ExcelWriter(df_excel_buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, header=False, sheet_name="Sheet1")
     df_excel_buffer.seek(0)
 
-    source_wb = openpyxl.load_workbook(df_excel_buffer)
+    source_wb = load_workbook(df_excel_buffer)
 
-    wb = openpyxl.Workbook()
+    wb = Workbook()
 
     ws = wb.active
     assert ws is not None
@@ -851,25 +849,6 @@ def process_macro(
     error = Error(contract_id=contract_id)
     macro_bytes, shifted_bytes, df_bytes, _ = None, None, None, None
     try:
-        if contract.bank not in {
-            'АО "Банк ЦентрКредит"',
-            'АО "First Heartland Jusan Bank"',
-            'АО "Нурбанк"',
-            'АО "ForteBank"',
-            'АО "Банк "Bank RBK"',
-            'АО "Евразийский банк"',
-            'АО "Народный Банк Казахстана"',
-            "АО «Bereke Bank» (ранее ДБ АО «Сбербанк»)",
-            "АО «Bereke Bank» (дочерний банк Lesha Bank LLC (Public))",
-            "АО «Халык-Лизинг»",
-            'АО "Лизинг Групп"',
-            'АО "Казахстанская Иджара Компания"',
-            'АО "ForteLeasing" (ФортеЛизинг)',
-        }:
-            raise BankNotSupportedError(
-                f"Банк/лизинг {contract.bank!r} не поддерживается для сверки."
-            )
-
         if skip_pretty_macro:
             shifted_workbook = shift_workbook(
                 source_df=contract.df,

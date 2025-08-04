@@ -4,12 +4,16 @@ import logging
 import os
 import shutil
 from enum import Enum
+from os.path import join, dirname, abspath, exists
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import win32com
 import win32com.client as win32
 from utils.utils import kill_all_processes
+
+if TYPE_CHECKING:
+    from typing import Any
 
 logger = logging.getLogger("DAMU")
 
@@ -38,10 +42,10 @@ class Office:
         if self.project_folder:
             self.file_path = os.path.join(self.project_folder, self.file_path)
         try:
-            self.app = win32.Dispatch(office_type.value)
+            self.app = win32.DispatchEx(office_type.value)
         except AttributeError:
             shutil.rmtree(win32com.__gen_path__)
-            self.app = win32.Dispatch(office_type.value)
+            self.app = win32.DispatchEx(office_type.value)
 
         self.app.Visible = False
         self.app.DisplayAlerts = False
@@ -56,10 +60,20 @@ class Office:
             case Office.Type.WordType:
                 self.doc = self.open_doc()
 
+        assert self.doc is not None, f"{self.doc=!r}, {office_type=!r}"
+
     def open_doc(self) -> Any:
         if self.office_type != Office.Type.WordType:
             raise self.potential_error
-        return self.app.Documents.Open(self.file_path)
+        return self.app.Documents.Open(
+            self.file_path,
+            OpenAndRepair=True,
+            ConfirmConversions=False,
+            ReadOnly=True,
+            AddToRecentFiles=False,
+            Visible=False,
+            NoEncodingDialog=True,
+        )
 
     def open_workbook(self) -> Any:
         if self.office_type != Office.Type.ExcelType:
@@ -128,53 +142,122 @@ class Office:
         self.quit_app()
 
 
-def close_doc(doc) -> None:
-    if not doc:
-        return
+def recover_docx(file_path: str) -> None:
+    recover_path = abspath(join(dirname(file_path), "recovering.docx"))
+    if exists(recover_path):
+        os.unlink(recover_path)
 
+    logger.info(recover_path)
+
+    shutil.copy(file_path, recover_path)
+
+    app, doc = None, None
     try:
-        doc.Close()
-    except (Exception, BaseException) as err:
-        logging.exception(err)
-        kill_all_processes(proc_name="WINWORD")
+        app = win32.DispatchEx("Word.Application")
+        logger.info("Opened Word.Application")
+        app.Visible = 0
+        logger.info("Set Visible to 0")
+        app.DisplayAlerts = 0
+        logger.info("Set DisplayAlerts to 0")
 
+        app.AutomationSecurity = 3
+        logger.info("Set AutomationSecurity to 3")
 
-def quit_app(app) -> None:
-    if not app:
-        return
+        doc = app.Documents.Open(
+            recover_path,
+            OpenAndRepair=True,
+            ConfirmConversions=False,
+            AddToRecentFiles=False,
+            Visible=False,
+            NoEncodingDialog=True,
+        )
+        if doc is None:
+            raise Exception(f"Failed to open document: {file_path}")
 
-    try:
+        logger.info("Opened document")
+
+        doc.SaveAs(recover_path, FileFormat=16, AddToRecentFiles=False)
+        logger.info("Saved as DOCX")
+
+        doc.Close(False)
+        doc = None
+        logger.info("Closed document")
+
         app.Quit()
+        app = None
+        logger.info("Closed Word.Application")
+
+        if exists(file_path):
+            os.unlink(file_path)
+        os.rename(recover_path, file_path)
     except (Exception, BaseException) as err:
-        logging.exception(err)
-        kill_all_processes(proc_name="WINWORD")
+        if doc:
+            doc.Close(False)
+        if app:
+            app.Quit()
+        raise err
 
 
-def docx_to_pdf(docx_path: Path, pdf_path: Path) -> None:
-    app = None
-    doc = None
+def docx_to_pdf(docx_path: str, pdf_path: str) -> None:
+    recover_path = abspath(join(dirname(docx_path), "recovering.docx"))
+    if exists(recover_path):
+        os.unlink(recover_path)
 
+    logger.info(recover_path)
+
+    shutil.copy(docx_path, recover_path)
+
+    app, doc = None, None
     try:
-        app = win32.Dispatch("Word.Application")
-        app.Visible = False
-        app.DisplayAlerts = False
+        app = win32.DispatchEx("Word.Application")
+        logger.info("Opened Word.Application")
+        app.Visible = 0
+        logger.info("Set Visible to 0")
+        app.DisplayAlerts = 0
+        logger.info("Set DisplayAlerts to 0")
 
-        doc = app.Documents.Open(str(docx_path))
-        doc.SaveAs(str(pdf_path), FileFormat=17)
-    except Exception as e:
-        try:
-            print(docx_path)
-            app = win32.gencache.EnsureDispatch("Word.Application")
-            app.Visible = False
+        app.AutomationSecurity = 3
+        logger.info("Set AutomationSecurity to 3")
 
-            doc = app.Documents.Open(str(docx_path), OpenAndRepair=True)
-            doc.SaveAs(str(pdf_path), FileFormat=17)
-        except Exception as e2:
-            print(docx_path)
-            close_doc(doc)
-            quit_app(app)
+        doc = app.Documents.Open(
+            str(docx_path),
+            OpenAndRepair=True,
+            ConfirmConversions=False,
+            ReadOnly=True,
+            AddToRecentFiles=False,
+            Visible=False,
+            NoEncodingDialog=True,
+        )
+        logger.info("Opened document")
 
-            raise e2
-    finally:
-        close_doc(doc)
-        quit_app(app)
+        doc.SaveAs(pdf_path, FileFormat=17, AddToRecentFiles=False)
+        logger.info("Saved as PDF")
+
+        doc.Close(False)
+        doc = None
+        logger.info("Closed document")
+
+        app.Quit()
+        app = None
+        logger.info("Closed Word.Application")
+
+        if exists(recover_path):
+            os.unlink(recover_path)
+    except (Exception, BaseException) as err:
+        if doc:
+            doc.Close(False)
+        if app:
+            app.Quit()
+        raise err
+
+
+def main():
+    recover_docx(
+        Path(
+            r"C:\Users\robot2\Desktop\robots\damu\downloads\sverka\2025-07-31\a6708a6a-e3b1-4062-b29e-6889bd8e03ba\documents\ДС по внутрен торговли_ИП Урдабаева М-05-28-2025_2 транш.docx"
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

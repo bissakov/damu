@@ -1,18 +1,20 @@
+from __future__ import annotations
+
 import io
 import zlib
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import cast
+from typing import TYPE_CHECKING
 
 import pandas as pd
-from pandas import Timestamp
-from pandas._typing import WriteBuffer
 
-from utils.db_manager import DatabaseManager
+if TYPE_CHECKING:
+    from utils.db_manager import DatabaseManager
+    from pandas import Timestamp
 
 
 def date_to_str(dt: date | None) -> str | None:
-    if isinstance(dt, (datetime, Timestamp)):
+    if isinstance(dt, datetime):
         return dt.date().isoformat()
     elif isinstance(dt, date):
         return dt.isoformat()
@@ -190,7 +192,7 @@ class Error:
                 "Возможно скан документа невозможно прочесть роботу."
             )
         elif "DateNotFoundError" in trc:
-            human_readable = "Не удалось найти либо не удалось обработать дату начала или завершения ДС."
+            human_readable = "Не удалось найти либо не удалось обработать дату начала или завершения в файле договора."
         elif "FloatConversionError" in trc:
             human_readable = "Не удалось преобразовать значения графика погашения в числовой формат."
         elif "InvalidColumnCount" in trc or "TableNotFound" in trc:
@@ -210,7 +212,7 @@ class Error:
         elif "WrongDataInColumnError" in trc:
             human_readable = str(self.error)
         elif "ExcesssiveTableCountError" in trc:
-            human_readable = "Найдено неверное кол-во таблиц погашений - меньше 1, но больше 2."
+            human_readable = "Найдено неверное кол-во таблиц погашений - меньше 1 или больше 2."
         elif "DataFrameInequalityError" in trc:
             human_readable = "Казахские и русские версии таблиц погашений не равны друг другу."
         elif (
@@ -256,7 +258,7 @@ class EdoContract:
             "id": self.contract_id,
             "ds_id": self.ds_id,
             "ds_date": self.ds_date,
-            "dbz_iz": self.dbz_id,
+            "dbz_id": self.dbz_id,
             "dbz_date": self.dbz_date,
             "sed_number": self.sed_number,
             "contract_type": self.contract_type,
@@ -271,9 +273,9 @@ class EdoContract:
         if not contract_exists:
             query = """
                 INSERT OR REPLACE INTO contracts
-                (id, ds_id, ds_date, ds_id, dbz_date, sed_number, contract_type)
+                (id, ds_id, ds_date, dbz_id, dbz_date, sed_number, contract_type)
                 VALUES
-                (:id, :ds_id, :ds_date, :ds_id, :dbz_date, :sed_number, :contract_type)
+                (:id, :ds_id, :ds_date, :dbz_id, :dbz_date, :sed_number, :contract_type)
             """
         else:
             query = """
@@ -297,6 +299,8 @@ class ParseSubsidyContract:
     protocol_id: str | None = None
     start_date: date | None = None
     end_date: date | None = None
+    contract_start_date: date | None = None
+    contract_end_date: date | None = None
     loan_amount: float | None = None
     iban: str | None = None
     df: pd.DataFrame | None = None
@@ -307,14 +311,21 @@ class ParseSubsidyContract:
     def __hash__(self) -> int:
         return hash((self.contract_id,))
 
+    def __repr__(self) -> str:
+        return (
+            f"ParseSubsidyContract(contract_id={self.contract_id!r}, protocol_id={self.protocol_id!r}, "
+            f"start_date={self.start_date!r}, end_date={self.end_date!r}, "
+            f"contract_start_date={self.contract_start_date!r}, contract_end_date={self.contract_end_date!r}, "
+            f"loan_amount={self.loan_amount!r}, iban={self.iban!r}, file_name={self.file_name!r}, "
+            f"settlement_date={self.settlement_date!r}, error={self.error!r})"
+        )
+
     def to_json(self) -> dict[str, str | float | None]:
         if self.df is None:
             df_blob = None
         else:
             buffer = io.BytesIO()
-            self.df.to_parquet(
-                cast(WriteBuffer[bytes], buffer), engine="fastparquet"
-            )
+            self.df.to_parquet(buffer, engine="fastparquet")
             df_blob = zlib.compress(buffer.getvalue())
 
         return {
@@ -322,6 +333,8 @@ class ParseSubsidyContract:
             "protocol_id": self.protocol_id,
             "start_date": date_to_str(self.start_date),
             "end_date": date_to_str(self.end_date),
+            "contract_start_date": date_to_str(self.contract_start_date),
+            "contract_end_date": date_to_str(self.contract_end_date),
             "loan_amount": self.loan_amount,
             "iban": self.iban,
             "df": df_blob if self.df is not None else None,
@@ -335,6 +348,8 @@ class ParseSubsidyContract:
             SET protocol_id = :protocol_id,
                 start_date = :start_date,
                 end_date = :end_date,
+                contract_start_date = :contract_start_date,
+                contract_end_date = :contract_end_date,
                 loan_amount = :loan_amount,
                 iban = :iban,
                 df = :df,
@@ -352,6 +367,8 @@ class ParseJoinContract:
     protocol_id: str | None = None
     start_date: date | None = None
     end_date: date | None = None
+    contract_start_date: date | None = None
+    contract_end_date: date | None = None
     loan_amount: float | None = None
     iban: str | None = None
     df: pd.DataFrame | None = None
@@ -362,14 +379,21 @@ class ParseJoinContract:
     def __hash__(self) -> int:
         return hash((self.contract_id,))
 
+    def __repr__(self) -> str:
+        return (
+            f"ParseJoinContract(contract_id={self.contract_id!r}, protocol_id={self.protocol_id!r}, "
+            f"start_date={self.start_date!r}, end_date={self.end_date!r}, "
+            f"contract_start_date={self.contract_start_date!r}, contract_end_date={self.contract_end_date!r}, "
+            f"loan_amount={self.loan_amount!r}, iban={self.iban!r}, file_name={self.file_name!r}, "
+            f"settlement_date={self.settlement_date!r}, error={self.error!r})"
+        )
+
     def to_json(self) -> dict[str, str | float | bytes | None]:
         if self.df is None:
             df_blob = None
         else:
             buffer = io.BytesIO()
-            self.df.to_parquet(
-                cast(WriteBuffer[bytes], buffer), engine="fastparquet"
-            )
+            self.df.to_parquet(buffer, engine="fastparquet")
             df_blob = zlib.compress(buffer.getvalue())
 
         return {
@@ -377,6 +401,8 @@ class ParseJoinContract:
             "protocol_id": self.protocol_id,
             "start_date": date_to_str(self.start_date),
             "end_date": date_to_str(self.end_date),
+            "contract_start_date": date_to_str(self.contract_start_date),
+            "contract_end_date": date_to_str(self.contract_end_date),
             "loan_amount": self.loan_amount,
             "iban": self.iban,
             "df": df_blob if self.df is not None else None,
@@ -390,11 +416,11 @@ class ParseJoinContract:
             SET protocol_id = :protocol_id,
                 start_date = :start_date,
                 end_date = :end_date,
+                contract_start_date = :contract_start_date,
+                contract_end_date = :contract_end_date,
                 loan_amount = :loan_amount,
                 iban = :iban,
                 df = :df,
-                dbz_id = :dbz_id,
-                dbz_date = :dbz_date,
                 file_name = :file_name,
                 settlement_date = :settlement_date,
                 modified = CURRENT_TIMESTAMP
@@ -491,6 +517,7 @@ class CrmContract:
     customer: str | None = None
     customer_id: str | None = None
     bank_id: str | None = None
+    bank: str | None = None
     subsid_amount: float | None = None
     investment_amount: float | None = None
     pos_amount: float | None = None
@@ -503,6 +530,7 @@ class CrmContract:
     dbz_id: str | None = None
     dbz_date: date | None = None
     contragent: str | None = None
+    region: str | None = None
 
     def __hash__(self) -> int:
         return hash((self.contract_id,))
@@ -527,6 +555,7 @@ class CrmContract:
             "dbz_id": self.dbz_id,
             "dbz_date": date_to_str(self.dbz_date),
             "contragent": self.contragent,
+            "region": self.region,
         }
 
     def save(self, db: DatabaseManager) -> None:
@@ -549,6 +578,7 @@ class CrmContract:
                 dbz_id = :dbz_id,
                 dbz_date = :dbz_date,
                 contragent = :contragent,
+                region = :region,
                 modified = CURRENT_TIMESTAMP
             WHERE id = :id
         """

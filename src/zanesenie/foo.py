@@ -3,17 +3,9 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 
 import dotenv
 import pytz
-
-from sverka.crm import CRM
-from sverka.edo import EDO
-from sverka.process_contract import process_contract
-from sverka.structures import Registry
-from utils.db_manager import DatabaseManager
-from zanesenie.main import InterestRate, fill_1c, get_contract
 
 today = datetime.now(pytz.timezone("Asia/Almaty")).date()
 os.environ["today"] = today.isoformat()

@@ -1,26 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Iterable
+from typing import TYPE_CHECKING
 from itertools import islice
-from typing import Protocol, TypeVar
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Iterable
+    from typing import Protocol, TypeVar
 
-class Hashable(Protocol):
-    def __hash__(self) -> int: ...
+    class SupportsLT(Protocol):
+        def __lt__(self: LT, other: LT) -> bool: ...
 
-    def __eq__(self, other: object) -> bool: ...
-
-
-T = TypeVar("T")
-K = TypeVar("K")
-H = TypeVar("H", bound=Hashable)
-
-
-class SupportsLT(Protocol):
-    def __lt__(self: LT, other: LT) -> bool: ...
-
-
-LT = TypeVar("LT", bound=SupportsLT)
+    T = TypeVar("T")
+    LT = TypeVar("LT", bound=SupportsLT)
 
 
 class Unset: ...

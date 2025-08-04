@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import inspect
 import logging
 import os
@@ -6,11 +8,9 @@ import time
 import traceback
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import cast
-from urllib.parse import urljoin
+from typing import cast, TYPE_CHECKING
 
 import dotenv
-import httpx
 import pytz
 
 project_folder = Path(__file__).resolve().parent.parent.parent
@@ -22,7 +22,7 @@ sys.path.append(str(project_folder / "utils"))
 sys.path.append(str(project_folder / "zanesenie"))
 
 from sverka.crm import CRM, fetch_crm_data_one, is_first_protocol_id_valid
-from sverka.edo import EDO, Task
+from sverka.edo import EDO
 from sverka.error import CRMNotFoundError, ProtocolDateNotInRangeError
 from sverka.macros import process_macro
 from sverka.parser import parse_document
@@ -34,7 +34,11 @@ from utils.utils import (
     humanize_timedelta,
     is_tomorrow,
     safe_extract,
+    TelegramAPI,
 )
+
+if TYPE_CHECKING:
+    from sverka.edo import Task
 
 
 def setup_logger(_today: date | None = None) -> None:
@@ -76,77 +80,6 @@ os.environ["today"] = today.isoformat()
 setup_logger(today)
 
 logger = logging.getLogger("DAMU")
-
-
-class TelegramAPI:
-    def __init__(self) -> None:
-        self.client = httpx.Client()
-        self.token, self.chat_id = os.environ["TOKEN"], os.environ["CHAT_ID"]
-        self.api_url = f"https://api.telegram.org/bot{self.token}/"
-
-        self.pending_messages: list[str] = []
-
-    def reload_session(self) -> None:
-        self.client.close()
-        self.client = httpx.Client()
-
-    def send_message(
-        self,
-        message: str | None = None,
-        use_session: bool = True,
-        use_md: bool = False,
-    ) -> bool:
-        send_data: dict[str, str | None] = {"chat_id": self.chat_id}
-
-        if use_md:
-            send_data["parse_mode"] = "MarkdownV2"
-
-        pending_message = "\n".join(self.pending_messages)
-        if pending_message:
-            message = f"{pending_message}\n{message}"
-
-        url = urljoin(self.api_url, "sendMessage")
-        send_data["text"] = message
-
-        status_code = 0
-
-        try:
-            if use_session:
-                response = self.client.post(url, data=send_data, timeout=10)
-            else:
-                response = httpx.post(url, data=send_data, timeout=10)
-
-            data = "" if not hasattr(response, "json") else response.json()
-            status_code = response.status_code
-            logger.debug(f"{status_code=}, {data=}")
-            response.raise_for_status()
-
-            if status_code == 200:
-                self.pending_messages = []
-                return True
-
-            return False
-        except httpx.HTTPError as err:
-            if status_code == 429 and message:
-                self.pending_messages.append(message)
-
-            logger.exception(err)
-            return False
-
-    def send_with_retry(self, message: str) -> bool:
-        retry = 0
-        while retry < 5:
-            try:
-                use_session = retry < 5
-                success = self.send_message(message, use_session)
-                return success
-            except httpx.HTTPError as e:
-                self.reload_session()
-                logger.exception(e)
-                logger.warning(f"{e} intercepted. Retry {retry + 1}/10")
-                retry += 1
-
-        return False
 
 
 def reply_to_notification(
@@ -268,6 +201,10 @@ def process_notification(
             reply = crm_contract.error.human_readable
             return reply
 
+        if crm_contract.bank not in list(registry.banks.keys()):
+            reply = f"Банк/лизинг {crm_contract.bank!r} не поддерживается."
+            return reply
+
         macro = process_macro(
             contract_id=contract_id,
             db=db,
@@ -309,7 +246,11 @@ def process_notification(
                 reply = crm_contract.error.human_readable
                 return reply
 
-    reply = "Согласовано. Не найдено замечаний."
+    if "не поддерживается для сверки" in (macro.error.human_readable or ""):
+        reply = macro.error.human_readable
+    else:
+        reply = "Согласовано. Не найдено замечаний."
+
     return reply
 
 
@@ -335,8 +276,8 @@ def process_notifications(
             bot.send_message(f"Found {len(tasks)} notifications")
 
         for task in tasks:
-            if task.doc_id in failed_tasks:
-                continue
+            # if task.doc_id in failed_tasks:
+            #     continue
 
             logger.info(f"Working on task {task}")
             try:
@@ -384,7 +325,9 @@ def process_notifications(
 def main() -> None:
     dotenv.load_dotenv(".env")
 
-    registry = Registry(download_folder=Path(f"downloads/{today}"))
+    registry = Registry(
+        download_folder=Path(f"downloads/sverka/{today}"), db_name="sverka"
+    )
 
     edo = EDO(
         user=os.environ["EDO_USERNAME"],
@@ -401,7 +344,7 @@ def main() -> None:
         user_agent=os.environ["USER_AGENT"],
         schema_json_path=registry.schema_json_path,
     )
-    bot = TelegramAPI()
+    bot = TelegramAPI(process_name="sve")
 
     bot.send_message('START of the process "Сверка договоров"')
     logger.info('START of the process "Сверка договоров"')

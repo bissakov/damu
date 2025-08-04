@@ -1,11 +1,12 @@
+from __future__ import annotations
+
+import dataclasses
 import json
 import logging
 import re
 import traceback
 from datetime import date, datetime, timedelta
-from pathlib import Path
-from types import TracebackType
-from typing import Any, Type, cast, override
+from typing import TYPE_CHECKING, cast, override
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta
@@ -16,10 +17,16 @@ from sverka.error import (
     ProtocolDateNotInRangeError,
     VypiskaDownloadError,
 )
-from sverka.structures import Registry
 from sverka.subsidy import Bank, CrmContract, Error, InterestRate
-from utils.db_manager import DatabaseManager
 from utils.request_handler import RequestHandler
+
+if TYPE_CHECKING:
+    from types import TracebackType
+    from typing import Any, Type
+    from pathlib import Path
+    from sverka.structures import Registry
+    from utils.db_manager import DatabaseManager
+
 
 logger = logging.getLogger("DAMU")
 
@@ -84,6 +91,20 @@ class Schemas:
         schema["filters"]["items"]["primaryColumnFilter"]["rightExpression"][
             "parameter"
         ]["value"] = contragent_id
+        return schema
+
+    def full_contragent(self, contragent_id: str) -> dict[str, Any]:
+        schema = self.schemas["full_contragent"]
+        schema["filters"]["items"]["primaryColumnFilter"]["rightExpression"][
+            "parameter"
+        ]["value"] = contragent_id
+        return schema
+
+    def contact(self, contact_id: str) -> dict[str, Any]:
+        schema = self.schemas["contact"]
+        schema["filters"]["items"]["primaryColumnFilter"]["rightExpression"][
+            "parameter"
+        ]["value"] = contact_id
         return schema
 
 
@@ -226,6 +247,38 @@ class CRM(RequestHandler):
                 return rows[0]  # type: ignore
 
         return None
+
+    def fetch_region(self, project_id: str) -> str | None:
+        if not self.is_logged_in:
+            self.login()
+
+        json_data = self.schemas.vypiska_project(project_id)
+        response = self.request(
+            method="post",
+            path="0/DataService/json/SyncReply/SelectQuery",
+            json=json_data,
+        )
+        if not response:
+            self.is_logged_in = False
+            return None
+
+        if not hasattr(response, "json"):
+            return None
+
+        data = response.json()
+        rows = data.get("rows")
+        assert isinstance(rows, list)
+
+        region = next(
+            (
+                (row.get("RealizationRegion") or {}).get("displayValue")
+                for row in rows
+                if row.get("Type", {}).get("displayValue") == "Протокол ДС"
+            ),
+            None,
+        )
+
+        return region
 
     def fetch_protocol_date(self, project_id: str) -> dict[str, Any] | None:
         if not self.is_logged_in:
@@ -376,8 +429,58 @@ class CRM(RequestHandler):
         assert isinstance(rows, list)
 
         row = rows[0]
-        bin = row.get("BinInn")
-        return bin
+        bin_iin = row.get("BinInn")
+        return bin_iin
+
+    def fetch_full_contragent_data(
+        self, contragent_id: str
+    ) -> dict[str, Any] | None:
+        if not self.is_logged_in:
+            self.login()
+
+        json_data = self.schemas.full_contragent(contragent_id=contragent_id)
+        response = self.request(
+            method="post",
+            path="0/DataService/json/SyncReply/SelectQuery",
+            json=json_data,
+        )
+        if not response:
+            self.is_logged_in = False
+            return None
+
+        if not hasattr(response, "json"):
+            return None
+
+        data = response.json()
+        rows = data.get("rows")
+        assert isinstance(rows, list)
+
+        row = rows[0]
+        return row
+
+    def fetch_contact_data(self, contact_id: str) -> dict[str, Any] | None:
+        if not self.is_logged_in:
+            self.login()
+
+        json_data = self.schemas.contact(contact_id=contact_id)
+        response = self.request(
+            method="post",
+            path="0/DataService/json/SyncReply/SelectQuery",
+            json=json_data,
+        )
+        if not response:
+            self.is_logged_in = False
+            return None
+
+        if not hasattr(response, "json"):
+            return None
+
+        data = response.json()
+        rows = data.get("rows")
+        assert isinstance(rows, list)
+
+        row = rows[0]
+        return row
 
     @override
     def __exit__(
@@ -508,6 +611,91 @@ def is_first_protocol_id_valid(crm: CRM, protocol_id: str) -> None:
         raise ProtocolDateNotInRangeError()
 
 
+@dataclasses.dataclass
+class PrimaryContact:
+    contragent_id: str
+    contact_id: str
+    full_contragent_name: str | None
+    subject_type: str | None
+    contact_name: str | None
+    iin: str | None
+    gender: str | None
+    birth_date: str | None
+    address: str | None
+    phone: str | None
+    email: str | None
+
+    def to_be_filled(self) -> bool:
+        return (
+            self.full_contragent_name is not None
+            and self.subject_type is not None
+            and self.contact_name is not None
+            and self.iin is not None
+            and self.gender is not None
+            and self.birth_date is not None
+            and self.address is not None
+            and self.phone is not None
+            and self.email is not None
+        )
+
+
+def get_contact_data(crm: CRM, contragent_id: str) -> PrimaryContact | None:
+    contragent_data = crm.fetch_full_contragent_data(contragent_id)
+
+    primary_contact_data = contragent_data.get("PrimaryContact") or {}
+    contact_id: str | None = primary_contact_data.get("value")
+    if not contact_id:
+        logger.info(f"Contact ID not found")
+        return None
+
+    contact_name: str | None = primary_contact_data.get("displayValue")
+    subject_type: str | None = (contragent_data.get("SubjectType") or {}).get(
+        "displayValue"
+    )
+    full_contragent_name: str | None = contragent_data.get(
+        "AlternativeName"
+    ) or contragent_data.get("Name")
+    address: str | None = contragent_data.get("Address")
+
+    contact_data = crm.fetch_contact_data(contact_id)
+
+    if not contact_name:
+        contact_name = contact_data.get("Name")
+
+    gender: str | None = (contact_data.get("Gender") or {}).get("displayValue")
+    birth_date: str | None = contact_data.get("BirthDate")
+    if birth_date:
+        birth_date = datetime.fromisoformat(birth_date).strftime("%d%m%Y")
+    iin: str | None = contact_data.get("INN")
+    phone: str | None = (
+        contact_data.get("MobilePhone")
+        or contact_data.get("Phone")
+        or contact_data.get("HomePhone")
+    )
+    if len(phone) == 11:
+        phone = phone[1::]
+    email: str | None = contact_data.get("Email")
+
+    if not address:
+        address = contact_data.get("Address")
+
+    primary_contact = PrimaryContact(
+        contragent_id=contragent_id,
+        contact_id=contact_id,
+        full_contragent_name=full_contragent_name,
+        subject_type=subject_type,
+        contact_name=contact_name,
+        iin=iin,
+        gender=gender,
+        birth_date=birth_date,
+        address=address,
+        phone=phone,
+        email=email,
+    )
+
+    return primary_contact
+
+
 def fetch_crm_data_one(
     crm: CRM,
     contract_id: str,
@@ -559,6 +747,8 @@ def fetch_crm_data_one(
     )
     bank.save(db)
 
+    contract.bank = bank.bank
+
     project = crm.get_project_data(project_id)
     if not project:
         try:
@@ -583,6 +773,8 @@ def fetch_crm_data_one(
     )
     contract.request_number = project.get("RequestNumber")
 
+    contract.region = crm.fetch_region(project_id)
+
     date_scoring = project.get("DateScoring") or crm.fetch_protocol_date(
         project_id
     )
@@ -594,6 +786,8 @@ def fetch_crm_data_one(
     contract.repayment_procedure = registry.mappings.get(
         "repayment_procedure", {}
     ).get(project.get("RepaymentOrderMainLoan", {}).get("displayValue"))
+
+    assert contract.repayment_procedure
 
     bvulk_date = project.get("BvuLkDate") or ""
     contract.decision_date = datetime.strptime(

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from types import TracebackType
-from typing import Literal, Type
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
-from httpx import Client, Cookies, Headers, RequestError, Response
+from httpx import Client, Cookies, RequestError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from types import TracebackType
+    from typing import Literal, Type, TYPE_CHECKING
+    from httpx import Response, Headers
+
 
 logger = logging.getLogger("DAMU")
 
@@ -48,11 +53,7 @@ class RequestHandler:
         self.client.headers[name] = value
 
     def _handle_response(
-        self,
-        response: Response,
-        method: str,
-        path: str,
-        update_cookies: bool,
+        self, response: Response, method: str, path: str, update_cookies: bool
     ) -> Response | None:
         if response.is_error:
             logger.warning(
