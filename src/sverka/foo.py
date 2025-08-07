@@ -4,10 +4,12 @@ import shutil
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import cast, TYPE_CHECKING
 
 import dotenv
 import pytz
+import win32com.client as win32
+
 
 project_folder = Path(__file__).resolve().parent.parent.parent
 os.environ["project_folder"] = str(project_folder)
@@ -24,7 +26,11 @@ from sverka.parser import parse_document
 from sverka.structures import Registry
 from sverka.subsidy import date_to_str
 from utils.db_manager import DatabaseManager
-from utils.utils import safe_extract
+from utils.utils import safe_extract, kill_all_processes
+from utils.office import docx_to_pdf
+
+if TYPE_CHECKING:
+    from utils.office import WordProto
 
 
 def setup_logger() -> None:
@@ -209,7 +215,7 @@ def main() -> None:
     dotenv.load_dotenv(".env")
 
     registry = Registry(
-        download_folder=Path(f"downloads/sverka"), db_name="sverka"
+        download_folder=Path(f"downloads/foo"), db_name="sverka"
     )
 
     edo = EDO(
@@ -231,80 +237,27 @@ def main() -> None:
     logger.info('START of the process "Сверка договоров"')
 
     with DatabaseManager(registry.database) as db:
-        # contracts = db.request(
-        #     """
-        #     SELECT id, modified, file_name, contract_type FROM contracts
-        #     WHERE
-        #         file_name IS NOT NULL
-        #         AND contract_type = "Первый договор субсидирования"
-        #     """,
-        #     req_type="fetch_all",
-        # )
-        #
-        # data = []
-        #
-        # for i, contract in enumerate(contracts):
-        #     contract_id, modified, file_name, contract_type = contract
-        #     modified = datetime.fromisoformat(modified).date().isoformat()
-        #
-        #     ds_file_path = (
-        #         registry.download_folder
-        #         / modified
-        #         / contract_id
-        #         / "documents"
-        #         / file_name
-        #     )
-        #     if not ds_file_path.exists():
-        #         continue
-        #
-        #     document = SubsidyDocument(file_path=ds_file_path)
-        #     if not document.is_correct_file():
-        #         continue
-        #
-        #     table_parser = TableParser(document=document)
-        #
-        #     table = next(
-        #         (
-        #             pt
-        #             for t in document.doc.tables
-        #             if (
-        #                 pt := table_parser.parse_table(
-        #                     t, replace_newlines=False
-        #                 )
-        #             )
-        #             and "получат" in pt[0][-1].lower()
-        #         ),
-        #         None,
-        #     )
-        #
-        #     if not table:
-        #         print(ds_file_path.as_posix())
-        #         continue
-        #
-        #     row = next(
-        #         (r for r in table[::-1] if "БИН" in r[-1] or "ИИН" in r[-1]),
-        #         None,
-        #     )
-        #
-        #     # if len(row) != 3:
-        #     #     print(ds_file_path.as_posix())
-        #     #     continue
-        #
-        #     data.append(row[-1].strip())
-        #
-        # import pandas as pd
-        #
-        # df = pd.DataFrame(data, columns=["Получатель"])
-        # df.to_excel(
-        #     r"C:\Users\robot2\Desktop\robots\damu\test.xlsx", index=False
-        # )
-
-        contract_id = "183c24f3-0686-43bf-a326-688c5e73004c"
+        contract_id = "1d2061ac-02fa-4042-9574-68904bea034f"
 
         reply = process_notification(
             db=db, edo=edo, crm=crm, registry=registry, contract_id=contract_id
         )
         logger.info(f"Reply: {reply}")
+
+    doc_path = r"C:\Users\robot2\Desktop\robots\damu\downloads\foo\1d2061ac-02fa-4042-9574-68904bea034f\documents\Договор субсидирования №3.docx"
+
+    word: WordProto = win32.DispatchEx("Word.Application")
+    word.Visible = 0
+    word.DisplayAlerts = 0
+    word.AutomationSecurity = 3
+    try:
+        docx_to_pdf(word, doc_path, doc_path)
+        # print(doc)
+
+    except Exception as e:
+        if word:
+            word.Quit()
+        raise e
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, cast, override
 
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 from bs4 import BeautifulSoup, SoupStrainer, Tag
 
@@ -137,7 +137,13 @@ class EDO(RequestHandler):
         if not self.is_logged_in:
             self.login()
 
-        params = {"pp": "empty"}
+        params = {
+            "pp": "empty",
+            "qs": "",
+            "g[point_title]": "efedbcf5-c9e9-4a7f-9a85-51d165f70141",
+            "p": "0",
+            "s/[f_4136269/]": "asc",
+        }
         response = self.request(
             method="get",
             path="/workflow/index/00000000-0000-0000-0000-000000000011/aade4fc1-d676-428b-91e3-53c0fa1f025b",
@@ -638,7 +644,7 @@ class EDO(RequestHandler):
                 continue
 
             file_path = download_folder / file_name
-            if file_path.exists():
+            if file_path.exists() and file_path.stat().st_size > 0:
                 logger.info("Valid file potentially exists...")
                 continue
 
@@ -666,14 +672,24 @@ class EDO(RequestHandler):
             "wmk_tpl": "",
         }
 
-        response = self.request(
-            method="get", path=path, params=params, headers=headers
-        )
-        if not response:
-            return False
+        # response = self.request(
+        #     method="get", path=path, params=params, headers=headers
+        # )
+        # if not response:
+        #     return False
+        #
+        # with file_path.open("wb") as file:
+        #     file.write(response.content)
 
-        with file_path.open("wb") as file:
-            file.write(response.content)
+        url = urljoin(self.base_url, path)
+        with self.client.stream(
+            method="GET", url=url, params=params, headers=headers
+        ) as response:
+            response.raise_for_status()
+            with open(file_path, "wb") as f:
+                for idx, chunk in enumerate(response.iter_bytes()):
+                    logger.info(f"Chunk {idx} - {len(chunk)}")
+                    f.write(chunk)
 
         return True
 

@@ -119,7 +119,12 @@ def normalize_value(value: str) -> str:
     raise ValueError from last_exception
 
 
-def safe_extract(archive_path: Path, documents_folder: Path) -> None:
+def safe_extract(
+    archive_path: Path,
+    documents_folder: Path,
+    check_format: bool = True,
+    normalize_name: bool = True,
+) -> None:
     try:
         archive = zipfile.ZipFile(archive_path, "r")
     except zipfile.BadZipfile as err:
@@ -130,13 +135,18 @@ def safe_extract(archive_path: Path, documents_folder: Path) -> None:
         for file in archive.namelist():
             file_name = os.path.basename(file)
 
-            if file_name.lower().endswith("docx"):
+            if check_format and file_name.lower().endswith("docx"):
                 continue
 
-            normalized_file_name = normalize_value(file_name)
-            normalized_file_name = re.sub(r"\s+", " ", normalized_file_name)
-            normalized_file_name = normalized_file_name.replace("?", "").strip()
-            extract_path = documents_folder / normalized_file_name
+            if normalize_name:
+                normalized_file_name = normalize_value(file_name)
+                normalized_file_name = re.sub(r"\s+", " ", normalized_file_name)
+                normalized_file_name = normalized_file_name.replace(
+                    "?", ""
+                ).strip()
+                extract_path = documents_folder / normalized_file_name
+            else:
+                extract_path = documents_folder / file_name
 
             if extract_path.exists():
                 continue
