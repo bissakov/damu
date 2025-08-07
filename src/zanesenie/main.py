@@ -8,10 +8,10 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 import warnings
 from contextlib import suppress
 from datetime import date, datetime, timedelta
-from difflib import SequenceMatcher
 from pathlib import Path
 from time import sleep
 from typing import TYPE_CHECKING, cast
@@ -22,6 +22,9 @@ import pytz
 import yaml
 from pywinauto import ElementNotFoundError, Application
 from urllib3.exceptions import InsecureRequestWarning
+from PIL import ImageGrab
+import win32com.client as win32
+
 
 project_folder = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_folder))
@@ -62,14 +65,10 @@ if TYPE_CHECKING:
     from pywinauto import WindowSpecification
 
     from sverka.edo import Task
-    from utils.automation import (
-        ButtonWrapper,
-        ListItemWrapper,
-        ListViewWrapper,
-        UIAPaneWrapper,
-    )
+    from utils.automation import ButtonWrapper, ListItemWrapper, UIAPaneWrapper
     from sverka.process_contract import Contract
     from sverka.crm import PrimaryContact
+    from utils.office import WordProto
 
 
 class PotentialError(Exception): ...
@@ -125,9 +124,6 @@ def reply_to_notification(
     logger.info(f"Notification reply - {reply!r}")
 
     bot.send_message(f"{task.doc_id}:\n{reply}")
-
-    # if reply != "Согласовано. Не найдено замечаний.":
-    #     return
 
     edo.reply_to_notification(task=task, reply=reply)
 
@@ -234,32 +230,6 @@ class InterestRate:
         return InterestRate(*raw_rate)
 
 
-def has_error(win: WindowSpecification) -> bool:
-    sleep(0.5)
-
-    potential_alert = child(win, ctrl="Pane", idx=2)
-    if (
-        error_message := text(child(potential_alert, ctrl="Pane"))
-    ) and "Fail" in error_message:
-        print(error_message)
-        click(win, child(potential_alert, ctrl="Button", title="OK"))
-
-    messages_pane = child(win, ctrl="Pane", idx=18)
-    close_button = child(messages_pane, title="Close", ctrl="Button")
-
-    if exists(close_button):
-        click_type(win, child(messages_pane, ctrl="Document"), "^a^c")
-
-        message = pyperclip.paste()
-        print(message)
-
-        click(win, close_button)
-
-        return True
-
-    return False
-
-
 def get_error(win: WindowSpecification) -> str | None:
     sleep(0.5)
 
@@ -299,28 +269,9 @@ def open_file(file_path: Path) -> None:
     save_dialog.child_window(class_name="Button", found_index=0).click_input()
 
 
-def find_row(
-    parent: ListViewWrapper | WindowSpecification, project: str
-) -> ListItemWrapper | WindowSpecification | None:
-    rows = parent.descendants(control_type="ListItem")
-    for row in rows:
-        txt = text(row).strip()
-        if not txt:
-            continue
-        score = SequenceMatcher(None, project, txt).ratio()
-        if score >= 0.8:
-            print(f"{len(rows)=}, {txt=}, {score=}")
-            return row
-    return None
-
-
 def fill_contragent_data(
     primary_contact: PrimaryContact, app: Application, win: WindowSpecification
 ) -> None:
-    # click(win, child(form, title="Основные", ctrl="TabItem"))
-    #
-    # click_type(win, child(form, ctrl="Edit", idx=16), "^+{F4}", cls=False)
-
     pane = child(win, ctrl="Pane", idx=26)
 
     click(win, child(pane, title="Дополнительно", ctrl="TabItem"))
@@ -421,8 +372,6 @@ def find_row_by_query(
     ):
         return None
 
-    # row = find_row(win, project=contract.project)
-
     result_parent = child(win, ctrl="Tab", title="Результат", idx=1)
     return result_parent
 
@@ -434,6 +383,8 @@ def fill_contragent(
     primary_contact: PrimaryContact | None,
 ) -> None:
     if not primary_contact:
+        return
+    if not primary_contact.to_be_filled():
         return
 
     contact_copy = dataclasses.replace(primary_contact)
@@ -464,7 +415,6 @@ def fill_contragent(
                 contact_column = "address"
             case "Телефон1":
                 contact_column = "phone"
-                # value = value.replace("(", "").replace(")", "").replace("-", "")
             case "ФИОПервогоРуководителя":
                 contact_column = "contact_name"
             case "АдресЭлектроннойПочты":
@@ -481,9 +431,10 @@ def fill_contragent(
         if not contact_column:
             continue
 
-        # contact_value = getattr(contact_copy, contact_column)
         if value:
             setattr(contact_copy, contact_column, None)
+
+    logger.info(f"{contact_copy=!r}")
 
     if contact_copy.to_be_filled():
         click(win, cells[0], double=True)
@@ -513,6 +464,8 @@ def fill_contragent(
 
 def find_project(win: WindowSpecification, contract: Contract) -> bool:
     query = prepare_project_query(contract.contragent, contract.protocol_id)
+
+    ImageGrab.grab().save(r"C:\Users\robot2\Desktop\robots\damu\screens\2.png")
     result_parent = find_row_by_query(win=win, query=query)
 
     row = child(result_parent, ctrl="ListItem")
@@ -537,13 +490,13 @@ def find_project(win: WindowSpecification, contract: Contract) -> bool:
 def fill_main_project_data(
     app: Application,
     win: WindowSpecification,
-    form: WindowSpecification | UIAPaneWrapper,
+    project_form: WindowSpecification | UIAPaneWrapper,
     contract: Contract,
 ) -> None:
     """
     :param app: pywinauto.Application
     :param win: Главное окно 1С
-    :param form: Форма "Карточка проекта (форма элемента)"
+    :param project_form: Форма "Карточка проекта (форма элемента)"
     :param contract: Данные договора
     :return: None
 
@@ -552,7 +505,9 @@ def fill_main_project_data(
     """
 
     if contract.region:
-        click_type(win, child(form, ctrl="Edit", idx=6), "{F4}", cls=False)
+        click_type(
+            win, child(project_form, ctrl="Edit", idx=6), "{F4}", cls=False
+        )
         dict_win = child(win, ctrl="Pane", idx=56)
         click(
             dict_win,
@@ -580,15 +535,18 @@ def fill_main_project_data(
             print(f"Region {contract.region!r} not found!")
             send_keys(win, "{ESC}")
 
-    click(win, child(parent=form, ctrl="Edit", idx=7))
+    click(win, child(parent=project_form, ctrl="Edit", idx=7))
     send_keys(
         win,
         "{F4}^f" + contract.credit_purpose + "{ENTER 2}",
-        pause=0.05,
+        pause=0.1,
         spaces=True,
     )
     click_type(
-        win, child(form, ctrl="Edit", idx=3), contract.protocol_date, cls=True
+        win,
+        child(project_form, ctrl="Edit", idx=3),
+        contract.protocol_date,
+        cls=True,
     )
 
 
@@ -615,9 +573,9 @@ def change_date(
 
     if date_to_check != protocol_date:
         click(win, goto_button)
-        send_keys(win, "{DOWN}{ENTER 2}", pause=0.05)
+        send_keys(win, "{DOWN}{ENTER 2}", pause=0.1)
         send_keys(win, protocol_date)
-        send_keys(win, "{ENTER 4}{ESC}", pause=0.05)
+        send_keys(win, "{ENTER 4}{ESC}", pause=0.1)
 
 
 def change_sums(
@@ -648,7 +606,7 @@ def change_sums(
 
     click(win, child(form, title="БВУ/Рефинансирование", ctrl="TabItem"))
     click(win, goto_button)
-    send_keys(win, "{DOWN 8}{ENTER}", pause=0.05)
+    send_keys(win, "{DOWN 8}{ENTER}", pause=0.2)
 
     list_win = child(win, ctrl="Pane", idx=51)
 
@@ -665,35 +623,35 @@ def change_sums(
         default=0.0,
     )
 
-    send_keys(win, "{ENTER}", pause=0.05)
+    send_keys(win, "{ENTER}", pause=0.2)
 
     if (
         contract.credit_purpose == "Пополнение оборотных средств"
-        and existing_pos_amount != contract.loan_amount
+        and existing_pos_amount != contract.subsid_amount
     ):
-        send_keys(win, "{TAB 4}" + str(contract.loan_amount), pause=0.05)
+        send_keys(win, "{TAB 4}" + str(contract.subsid_amount), pause=0.1)
     elif (
         contract.credit_purpose == "Инвестиционный"
-        and existing_investment_amount != contract.loan_amount
+        and existing_investment_amount != contract.subsid_amount
     ):
-        send_keys(win, "{TAB 5}" + str(contract.loan_amount), pause=0.05)
+        send_keys(win, "{TAB 5}" + str(contract.subsid_amount), pause=0.1)
     elif contract.credit_purpose == "Инвестиционный + ПОС":
         if (
-            existing_pos_amount != contract.loan_amount
-            and existing_investment_amount != contract.loan_amount
+            existing_pos_amount != contract.subsid_amount
+            and existing_investment_amount != contract.subsid_amount
         ):
             send_keys(
                 win,
                 "{TAB 4}"
-                + str(contract.loan_amount)
+                + str(contract.subsid_amount)
                 + "{TAB}"
-                + str(contract.loan_amount),
-                pause=0.05,
+                + str(contract.subsid_amount),
+                pause=0.1,
             )
-        elif existing_pos_amount != contract.loan_amount:
-            send_keys(win, "{TAB 4}" + str(contract.loan_amount), pause=0.05)
-        elif existing_investment_amount != contract.loan_amount:
-            send_keys(win, "{TAB 5}" + str(contract.loan_amount), pause=0.05)
+        elif existing_pos_amount != contract.subsid_amount:
+            send_keys(win, "{TAB 4}" + str(contract.subsid_amount), pause=0.1)
+        elif existing_investment_amount != contract.subsid_amount:
+            send_keys(win, "{TAB 5}" + str(contract.subsid_amount), pause=0.1)
 
     send_keys(win, "{ESC}", pause=0.5)
     with suppress(ElementNotFoundError):
@@ -701,7 +659,7 @@ def change_sums(
     send_keys(win, "{ESC}", pause=0.5)
 
 
-def add_vypiska(
+def attach_vypiska(
     win: WindowSpecification,
     form: WindowSpecification | UIAPaneWrapper,
     contract: Contract,
@@ -864,11 +822,11 @@ def fill_contract_details(
         # Вид погашения платежа - Аннуитетный/Равными долями/Индивидуальный
         click(win, child(ds_form, ctrl="Edit", idx=18))
         if contract.repayment_procedure == "Аннуитетный":
-            send_keys(win, "{F4}{ENTER}", pause=0.05)
+            send_keys(win, "{F4}{ENTER}", pause=0.2)
         elif contract.repayment_procedure == "Равными долями":
-            send_keys(win, "{F4}{DOWN}{ENTER}", pause=0.05)
+            send_keys(win, "{F4}{DOWN}{ENTER}", pause=0.2)
         elif contract.repayment_procedure == "Индивидуальный":
-            send_keys(win, "{F4}{DOWN 2}{ENTER}", pause=0.05)
+            send_keys(win, "{F4}{DOWN 2}{ENTER}", pause=0.2)
         else:
             raise ValueError(
                 f"Don't know what to do with {contract.repayment_procedure!r}..."
@@ -987,11 +945,11 @@ def fill_contract_details(
         # Вид погашения платежа - Аннуитетный/Равными долями/Индивидуальный
         click(win, child(ds_form, ctrl="Edit", idx=17))
         if contract.repayment_procedure == "Аннуитетный":
-            send_keys(win, "{F4}{ENTER}", pause=0.05)
+            send_keys(win, "{F4}{ENTER}", pause=0.2)
         elif contract.repayment_procedure == "Равными долями":
-            send_keys(win, "{F4}{DOWN}{ENTER}", pause=0.05)
+            send_keys(win, "{F4}{DOWN}{ENTER}", pause=0.2)
         elif contract.repayment_procedure == "Индивидуальный":
-            send_keys(win, "{F4}{DOWN 2}{ENTER}", pause=0.05)
+            send_keys(win, "{F4}{DOWN 2}{ENTER}", pause=0.2)
         else:
             raise ValueError(
                 f"Don't know what to do with {contract.repayment_procedure!r}..."
@@ -1094,7 +1052,7 @@ def fill_contract(
         " Договор субсидирования", ""
     )
     if not existing_contract:
-        click_type(win, contract_field, "{F4}", double=True, pause=0.05)
+        click_type(win, contract_field, "{F4}", double=True, pause=0.1)
         dict_win = child(win, ctrl="Pane", idx=88)
         click(
             win,
@@ -1133,12 +1091,12 @@ def fill_contract(
         date_field,
         contract.start_date,
         cls=True,
-        pause=0.05,
+        pause=0.1,
         double=True,
         ent=True,
     )
 
-    click_type(win, type_field, "{F4}", double=True, pause=0.05)
+    click_type(win, type_field, "{F4}", double=True, pause=0.1)
     dict_win = child(win, ctrl="Pane", idx=88)
     click(
         win,
@@ -1171,102 +1129,11 @@ def fill_contract(
     return ds_form
 
 
-def open_app(app_path: Path | str, bin_path: Path | str) -> Application:
-    app = None
-    for _ in range(10):
-        try:
-            os.startfile(app_path)
-            sleep(2)
-
-            app = Application(backend="uia").connect(path=bin_path)
-            assert app is not None, Exception("App has not been opened")
-            return app
-        except (Exception, BaseException) as err:
-            logging.exception(err)
-            kill_all_processes("1cv8.exe")
-            continue
-
-    assert app is not None, Exception("max_retries exceeded")
-    return app
-
-
-def open_1c(
-    app_path: Path | str, bin_path: Path | str
-) -> tuple[Application, WindowSpecification]:
-    kill_all_processes("1cv8.exe")
-    app = open_app(app_path, bin_path)
-
-    win = window(app, title="Конфигурация.+", regex=True)
-    win.wait(wait_for="exists active enabled", timeout=60)
-    win.maximize()
-
-    return app, win
-
-
-def fill_1c(
-    contract: Contract,
-    rate: InterestRate,
-    primary_contact: PrimaryContact | None,
-    registry: Registry,
-    base_name: str,
-) -> str:
-    if not contract.ds_id:
-        return "Не удалось получить номер договора из .docx файла"
-    if not contract.ds_date:
-        return "Не удалось получить дату договора из .docx файла"
-
-    macro_path = cast(Path, contract.macro_path)
-    document_pdf_path = cast(Path, contract.document_pdf_path)
-
-    app_path = registry.resources_folder / base_name
-    bin_path = os.environ["ONE_C_PATH"]
-
-    app, win = open_1c(app_path, bin_path)
-
-    try:
-        fill_contragent(
-            app=app,
-            win=win,
-            contragent=contract.contragent,
-            primary_contact=primary_contact,
-        )
-    except Exception as err:
-        logger.warning(f"Filling contragent form failed - {str(err)!r}")
-
-    if not find_project(win=win, contract=contract):
-        return (
-            f"Не удалось найти проект '{contract.project.strip()}' контрагента c БИН "
-            f"'{contract.contragent}' и номером протокола '{contract.protocol_id}'"
-        )
-
-    form = child(win, ctrl="Pane", idx=27)
-
-    click(win, child(form, title="Read", ctrl="Button"))
-    if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
-        click(win, yes_button)
-        sleep(1)
-
-    if "Транш" not in contract.contract_type:
-        goto_button = child(form, title="Go to", ctrl="Button")
-        fill_main_project_data(app, win, form, contract)
-        change_date(win, form, goto_button, contract.protocol_date)
-        change_sums(win, form, goto_button, contract)
-
-    add_vypiska(win, form, contract)
-
-    if "Транш" not in contract.contract_type:
-        check_project_type(win, form, contract)
-
-    click(win, child(form, title="Записать", ctrl="Button"))
-
-    try:
-        ds_form = fill_contract(app, win, form, contract, rate)
-    except PotentialError as err:
-        return f"Неизвестная ошибка 1С. {str(err)!r}"
-
-    # click(win, child(ds_form, title="Find in list", ctrl="Button"))
-    # list_form = child(win, ctrl="Pane", idx=74)
-
+def attach_document(
+    win: WindowSpecification,
+    ds_form: WindowSpecification | UIAPaneWrapper,
+    document_pdf_path: Path,
+) -> None:
     click(win, child(ds_form, title="ПрикрепленныеДокументы", ctrl="TabItem"))
 
     click(win, child(ds_form, title="Add", ctrl="Button"))
@@ -1285,8 +1152,13 @@ def fill_1c(
         win, child(child(win, ctrl="Pane", idx=63), ctrl="Button", title="OK")
     )
 
-    click(win, child(ds_form, title="Записать", ctrl="Button"))
 
+def attach_graph(
+    win: WindowSpecification,
+    ds_form: WindowSpecification | UIAPaneWrapper,
+    contract: Contract,
+    macro_path: Path,
+) -> bool:
     click(
         win,
         child(ds_form, title="Открыть текущий График погашения", ctrl="Button"),
@@ -1348,10 +1220,129 @@ def fill_1c(
 
     click(win, child(table_form, title="Закрыть", ctrl="Button"))
 
+    return table_checked
+
+
+def open_1c(
+    app_path: Path | str, bin_path: Path | str
+) -> tuple[Application, WindowSpecification]:
+    kill_all_processes("1cv8.exe")
+
+    os.startfile(app_path)
+
+    app = None
+    while app is None:
+        app = Application(backend="uia").connect(path=bin_path)
+        sleep(1)
+
+    # assert app is not None and app.is_process_running(), Exception(
+    #     "App has not been opened"
+    # )
+
+    win = window(app, title="Конфигурация.+", regex=True)
+    windows = app.windows()
+    logger.info(f"{windows=!r}")
+    logger.info(f"{[t for w in windows if (t := w.window_text().strip())]=!r}")
+    logger.info(f"{app.is_process_running()=!r}")
+
+    win.wait(wait_for="exists", timeout=60)
+    win.maximize()
+
+    return app, win
+
+
+def fill_1c(
+    contract: Contract,
+    rate: InterestRate,
+    _: PrimaryContact | None,
+    registry: Registry,
+    base_name: str,
+) -> str:
+    if not contract.ds_id:
+        return "Не удалось получить номер договора из .docx файла"
+    if not contract.ds_date:
+        return "Не удалось получить дату договора из .docx файла"
+
+    macro_path = cast(Path, contract.macro_path)
+    document_pdf_path = cast(Path, contract.document_pdf_path)
+
+    app_path = registry.resources_folder / base_name
+    bin_path = os.environ["ONE_C_PATH"]
+
+    app, win = open_1c(app_path, bin_path)
+
+    ImageGrab.grab().save(r"C:\Users\robot2\Desktop\robots\damu\screens\1.png")
+
+    # try:
+    #     fill_contragent(
+    #         app=app,
+    #         win=win,
+    #         contragent=contract.contragent,
+    #         primary_contact=primary_contact,
+    #     )
+    # except Exception as err:
+    #     logger.warning(f"Filling contragent form failed - {str(err)!r}")
+    #
+    # try:
+    #     click(
+    #         win,
+    #         child(win, title="Консоль запросов и обработчик", ctrl="Button"),
+    #     )
+    #     send_keys(win, "{ESC}")
+    # except Exception as err:
+    #     logger.warning(f"{str(err)!r}")
+    #     app.kill()
+    #     app, win = open_1c(app_path, bin_path)
+
+    if not find_project(win=win, contract=contract):
+        logger.error(f"Project not found")
+        return (
+            f"Не удалось найти проект '{contract.project.strip()}' контрагента c БИН "
+            f"'{contract.contragent}' и номером протокола '{contract.protocol_id}'"
+        )
+
+    logger.info("Project found")
+
+    project_form = child(win, ctrl="Pane", idx=27)
+
+    click(win, child(project_form, title="Read", ctrl="Button"))
+    if (yes_button := child(win, title="Yes", ctrl="Button")).exists():
+        click(win, yes_button)
+        sleep(1)
+
+    if "Транш" not in contract.contract_type:
+        goto_button = child(project_form, title="Go to", ctrl="Button")
+        fill_main_project_data(app, win, project_form, contract)
+        logger.info("Main data filled")
+        change_date(win, project_form, goto_button, contract.protocol_date)
+        logger.info("Dates changed")
+        change_sums(win, project_form, goto_button, contract)
+        logger.info("Sums changed")
+
+    attach_vypiska(win, project_form, contract)
+    logger.info("Vypiska attached")
+
+    if "Транш" not in contract.contract_type:
+        check_project_type(win, project_form, contract)
+        logger.info("Project checked")
+
+    click(win, child(project_form, title="Записать", ctrl="Button"))
+
+    try:
+        ds_form = fill_contract(app, win, project_form, contract, rate)
+    except PotentialError as err:
+        return f"Неизвестная ошибка 1С. {str(err)!r}"
+
+    attach_document(win, ds_form, document_pdf_path)
+
+    click(win, child(ds_form, title="Записать", ctrl="Button"))
+
+    table_checked = attach_graph(win, ds_form, contract, macro_path)
+
     click(win, child(ds_form, title="Записать", ctrl="Button"))
     click(win, child(ds_form, title="OK", ctrl="Button"))
 
-    click(win, child(form, title="OK", ctrl="Button"))
+    click(win, child(project_form, title="OK", ctrl="Button"))
 
     reply = "Договор успешно занесен в 1С"
 
@@ -1386,7 +1377,12 @@ def update_result(db: DatabaseManager, contract_id: str, result: bool) -> None:
 
 
 def process_notification(
-    db: DatabaseManager, edo: EDO, crm: CRM, registry: Registry, task: Task
+    db: DatabaseManager,
+    edo: EDO,
+    crm: CRM,
+    registry: Registry,
+    task: Task,
+    word: WordProto,
 ) -> str:
     document_url = edo.get_attached_document_url(task.doctype_id, task.doc_id)
     if not document_url:
@@ -1416,6 +1412,7 @@ def process_notification(
             edo=edo,
             crm=crm,
             registry=registry,
+            word=word,
         )
         reply = None if ("Расхождения" in (reply or "")) else reply
 
@@ -1444,10 +1441,11 @@ def process_notification(
                     update_result(db=db, contract_id=contract_id, result=True)
 
                 return reply
-            except Exception as e:
+            except (Exception, BaseException) as e:
                 logger.exception(e)
                 update_result(db=db, contract_id=contract_id, result=False)
-                return "Неизвестная ошибка"
+                err = traceback.format_exc()
+                return f"Неизвестная ошибка\n{err}"
 
     if "Договор успешно занесен в 1С" not in reply:
         update_result(db=db, contract_id=contract_id, result=False)
@@ -1487,6 +1485,7 @@ def process_notifications(
     crm: CRM,
     registry: Registry,
     bot: TelegramAPI,
+    word: WordProto,
 ) -> int:
     default_wait_time = 180
 
@@ -1510,7 +1509,12 @@ def process_notifications(
             logger.info(f"Working on task {task}")
             try:
                 reply = process_notification(
-                    db=db, edo=edo, crm=crm, registry=registry, task=task
+                    db=db,
+                    edo=edo,
+                    crm=crm,
+                    registry=registry,
+                    task=task,
+                    word=word,
                 )
 
                 if "Неизвестная ошибка" in reply:
@@ -1518,7 +1522,7 @@ def process_notifications(
                     logger.error(reply)
                     tg_dev_name = os.environ["TG_DEV_NAME"]
                     bot.send_message(
-                        f"@{tg_dev_name} Поймана ошибка - кол-во неизвестных {len(failed_tasks)}."
+                        f"@{tg_dev_name} Поймана ошибка\n{reply}\nкол-во неизвестных {len(failed_tasks)}."
                     )
                     logger.error(
                         f"Поймана ошибка - кол-во неизвестных {len(failed_tasks)}."
@@ -1532,7 +1536,8 @@ def process_notifications(
             except Exception as err:
                 logging.exception(err)
                 logging.error(f"{err!r}")
-                bot.send_message(f"{err!r}")
+
+                bot.send_message(traceback.format_exc())
                 failed_tasks.add(task.doc_id)
 
                 logger.error(
@@ -1574,6 +1579,11 @@ def main() -> None:
         schema_json_path=registry.schema_json_path,
     )
 
+    word: WordProto = win32.DispatchEx("Word.Application")
+    word.Visible = 0
+    word.DisplayAlerts = 0
+    word.AutomationSecurity = 3
+
     bot = TelegramAPI(process_name="zan")
 
     bot.send_message('START of the process "Занесение договоров"')
@@ -1582,6 +1592,10 @@ def main() -> None:
     start_time = time.time()
     max_duration = 12 * 60 * 60
     tomorrow = today + timedelta(days=1)
+
+    bot.send_message(f"{__debug__=!r}")
+    bot.send_message(f"{sys.argv=!r}")
+    bot.send_message(f"{sys.executable=!r}")
 
     try:
         while True:
@@ -1594,7 +1608,12 @@ def main() -> None:
 
             with DatabaseManager(registry.database) as db:
                 duration = process_notifications(
-                    db=db, edo=edo, crm=crm, registry=registry, bot=bot
+                    db=db,
+                    edo=edo,
+                    crm=crm,
+                    registry=registry,
+                    bot=bot,
+                    word=word,
                 )
 
             logger.info(
@@ -1603,6 +1622,7 @@ def main() -> None:
             time.sleep(duration)
 
     finally:
+        word.Quit()
         logger.info("FINISH")
 
 

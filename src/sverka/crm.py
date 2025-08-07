@@ -628,14 +628,13 @@ class PrimaryContact:
     def to_be_filled(self) -> bool:
         return (
             self.full_contragent_name is not None
-            and self.subject_type is not None
-            and self.contact_name is not None
-            and self.iin is not None
-            and self.gender is not None
-            and self.birth_date is not None
-            and self.address is not None
-            and self.phone is not None
-            and self.email is not None
+            or self.subject_type is not None
+            or self.contact_name is not None
+            or self.gender is not None
+            or self.birth_date is not None
+            or self.address is not None
+            or self.phone is not None
+            or self.email is not None
         )
 
 
@@ -783,11 +782,15 @@ def fetch_crm_data_one(
         date_scoring, "%Y-%m-%dT%H:%M:%S.%f"
     ).date()
 
+    repayment_procedure = project.get("RepaymentOrderMainLoan", {}).get(
+        "displayValue"
+    )
+
     contract.repayment_procedure = registry.mappings.get(
         "repayment_procedure", {}
-    ).get(project.get("RepaymentOrderMainLoan", {}).get("displayValue"))
+    ).get(repayment_procedure)
 
-    assert contract.repayment_procedure
+    assert contract.repayment_procedure, f"Unknown {repayment_procedure=!r}"
 
     bvulk_date = project.get("BvuLkDate") or ""
     contract.decision_date = datetime.strptime(

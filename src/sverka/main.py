@@ -119,6 +119,11 @@ def process_notification(
     save_folder = edo.download_folder / contract_id
     documents_folder = save_folder / "documents"
     documents_folder.mkdir(parents=True, exist_ok=True)
+
+    for file_path in documents_folder.iterdir():
+        if file_path.name == "recovering.docx":
+            file_path.unlink()
+
     macros_folder = save_folder / "macros"
     macros_folder.mkdir(parents=True, exist_ok=True)
 

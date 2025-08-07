@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 import os
 import traceback
 from contextlib import suppress
@@ -23,6 +22,7 @@ if TYPE_CHECKING:
     from sverka.edo import EDO
     from sverka.structures import Registry
     from utils.db_manager import DatabaseManager
+    from utils.office import WordProto
 
 
 def iso_to_standard(dt: str) -> str:
@@ -31,80 +31,6 @@ def iso_to_standard(dt: str) -> str:
     if dt[2] == "." and dt[5] == ".":
         return dt
     return datetime.fromisoformat(dt).strftime("%d.%m.%Y")
-
-
-@dataclasses.dataclass(slots=True)
-class _Contract:
-    contract_id: str
-    contract_type: str
-    contragent: str
-    project: str
-    bank: str
-    credit_purpose: str
-    repayment_procedure: str
-    loan_amount: float
-    subsid_amount: float
-    protocol_date: str
-    vypiska_date: str
-    decision_date: str
-    settlement_date: int
-    iban: str
-    ds_id: str
-    ds_date: str
-    dbz_id: str
-    dbz_date: str
-    start_date: str
-    end_date: str
-    protocol_id: str
-    sed_number: str
-    document_path: Path
-    macro_path: Path
-    document_pdf_path: Path | None = None
-    protocol_pdf_path: Path | None = None
-
-    def __post_init__(self) -> None:
-        self.protocol_date = iso_to_standard(self.protocol_date).replace(
-            ".", ""
-        )
-        self.vypiska_date = iso_to_standard(self.vypiska_date).replace(".", "")
-        self.ds_date = iso_to_standard(self.ds_date).replace(".", "")
-        self.dbz_date = iso_to_standard(self.dbz_date).replace(".", "")
-        self.start_date = iso_to_standard(self.start_date).replace(".", "")
-        self.end_date = iso_to_standard(self.end_date).replace(".", "")
-        self.decision_date = iso_to_standard(self.decision_date).replace(
-            ".", ""
-        )
-
-        contract_folder = (
-            "downloads/zanesenie"
-            / Path(str(os.environ["today"]))
-            / self.contract_id
-        ).absolute()
-        with suppress(FileNotFoundError):
-            self.protocol_pdf_path = next(
-                (contract_folder / "vypiska").iterdir(), None
-            )
-
-        document_folder = contract_folder / "documents"
-
-        self.document_path = document_folder / Path(self.document_path)
-
-        self.document_pdf_path = self.document_path.with_suffix(".pdf")
-        if not self.document_pdf_path.exists():
-            docx_to_pdf(str(self.document_path), str(self.document_pdf_path))
-
-        assert isinstance(self.macro_path, bytes)
-        macro_path = document_folder / "macro.xlsx"
-        with macro_path.open("wb") as f:
-            f.write(self.macro_path)
-
-        self.macro_path = macro_path
-
-        protocol_ids = self.protocol_id.split(";")
-        if "Транш" in self.contract_type:
-            self.protocol_id = protocol_ids[0]
-        else:
-            self.protocol_id = protocol_ids[-1]
 
 
 class Contract:
@@ -135,8 +61,11 @@ class Contract:
         contract_end_date: date | None,
         protocol_id: str,
         sed_number: str,
-        document_name: str,
         region: str,
+        protocol_pdf_path: Path,
+        document_path: Path,
+        document_pdf_path: Path,
+        macro_path: Path,
     ) -> None:
         self.contract_id = contract_id
         self.contract_type = contract_type
@@ -159,6 +88,13 @@ class Contract:
         self.dbz_date = dbz_date.strftime("%d.%m.%Y").replace(".", "")
         self.start_date = start_date.strftime("%d.%m.%Y").replace(".", "")
         self.end_date = end_date.strftime("%d.%m.%Y").replace(".", "")
+        self.protocol_pdf_path = protocol_pdf_path
+        self.document_path = document_path
+        self.document_pdf_path = document_pdf_path
+        self.macro_path = macro_path
+        self.protocol_id = protocol_id
+        self.sed_number = sed_number
+        self.region = region
 
         if contract_start_date:
             self.contract_start_date = contract_start_date.strftime(
@@ -173,30 +109,6 @@ class Contract:
             ).replace(".", "")
         else:
             self.contract_end_date = None
-
-        self.protocol_id = protocol_id
-        self.sed_number = sed_number
-        self.region = region
-
-        contract_folder = (
-            "downloads/zanesenie"
-            / Path(str(os.environ["today"]))
-            / self.contract_id
-        ).absolute()
-        with suppress(FileNotFoundError):
-            self.protocol_pdf_path = next(
-                (contract_folder / "vypiska").iterdir(), None
-            )
-
-        document_folder = contract_folder / "documents"
-
-        self.document_path = Path(f"{document_folder}/{document_name}")
-
-        self.document_pdf_path = self.document_path.with_suffix(".pdf")
-        if not self.document_pdf_path.exists():
-            docx_to_pdf(str(self.document_path), str(self.document_pdf_path))
-
-        self.macro_path = document_folder / "macro.xlsx"
 
         protocol_ids = self.protocol_id.split(";")
         if "Транш" in self.contract_type:
@@ -228,12 +140,18 @@ def process_contract(
     edo: EDO,
     crm: CRM,
     registry: Registry,
+    word: WordProto,
 ) -> tuple[Contract | None, str | None]:
     logger.info(f"Trying to find a row for {contract_id=!r}")
 
     save_folder = edo.download_folder / contract_id
     documents_folder = save_folder / "documents"
     documents_folder.mkdir(parents=True, exist_ok=True)
+
+    for file_path in documents_folder.iterdir():
+        if file_path.name == "recovering.docx":
+            file_path.unlink()
+
     macros_folder = save_folder / "macros"
     macros_folder.mkdir(parents=True, exist_ok=True)
 
@@ -373,6 +291,27 @@ def process_contract(
             reply = crm_contract.error.human_readable
             return None, reply
 
+    contract_folder = (
+        "downloads/zanesenie" / Path(str(os.environ["today"])) / contract_id
+    ).absolute()
+    with suppress(FileNotFoundError):
+        protocol_pdf_path = next((contract_folder / "vypiska").iterdir(), None)
+
+    document_folder = contract_folder / "documents"
+    document_path = Path(f"{document_folder}/{parse_contract.file_name}")
+    document_pdf_path = document_path.with_suffix(".pdf")
+    if not document_pdf_path.exists():
+        try:
+            docx_to_pdf(word, str(document_path), str(document_pdf_path))
+        except Exception as err:
+            logger.error(err)
+            if "The file appears to be corrupted" in str(err):
+                reply = f"Не удалось преобразовать документ в формат PDF. Не удалось починить поврежденный файл."
+                return None, reply
+            raise err
+
+    macro_path = document_folder / "macro.xlsx"
+
     contract = Contract(
         contract_id=contract_id,
         contract_type=edo_contract.contract_type,
@@ -399,8 +338,11 @@ def process_contract(
         contract_end_date=parse_contract.contract_end_date,
         protocol_id=parse_contract.protocol_id,
         sed_number=edo_contract.sed_number,
-        document_name=parse_contract.file_name,
         region=crm_contract.region,
+        protocol_pdf_path=protocol_pdf_path,
+        document_path=document_path,
+        document_pdf_path=document_pdf_path,
+        macro_path=macro_path,
     )
 
     return contract, None

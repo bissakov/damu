@@ -217,27 +217,7 @@ def window(
 def focus(element: UiaElement) -> None:
     if not element.is_active():
         element.set_focus()
-        cast("WindowSpecification", element).wait(wait_for="active visible")
-
-
-def a(main_win: WindowSpecification, action: Callable[[], None]) -> None:
-    focus(main_win)
-    action()
-
-
-def click(
-    main_win: WindowSpecification,
-    element: UiaElement,
-    button: Literal["left", "right", "middle"] = "left",
-    double: bool = False,
-) -> None:
-    focus(main_win)
-    element.click_input(button=button, double=double)
-
-
-def _click(element: UiaElement, double: bool = False) -> None:
-    focus(element)
-    element.click_input(double=double)
+        cast("WindowSpecification", element).wait(wait_for="active")
 
 
 @overload
@@ -314,53 +294,120 @@ def menu_select_1c(
             break
 
 
-def send_keys(
-    win: WindowSpecification,
-    keystrokes: str,
-    pause: float = 0.05,
-    spaces: bool = False,
-) -> None:
-    focus(win)
-    keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
+if __debug__:
 
+    def outline(element: UiaElement) -> None:
+        focus(element)
+        element.draw_outline()
 
-def click_type(
-    win: WindowSpecification,
-    element: UiaElement,
-    keystrokes: str,
-    delay: float = 0.1,
-    pause: float = 0.05,
-    double: bool = False,
-    cls: bool = True,
-    ent: bool = False,
-    spaces: bool = False,
-    escape_chars: bool = False,
-    coords: tuple[int, int] | None = None,
-) -> None:
-    focus(win)
+    def click(
+        main_win: WindowSpecification,
+        element: UiaElement,
+        button: Literal["left", "right", "middle"] = "left",
+        double: bool = False,
+    ) -> None:
+        focus(main_win)
+        element.click_input(button=button, double=double)
 
-    if escape_chars:
-        keystrokes = (
-            keystrokes.replace("\n", "{ENTER}")
-            .replace("(", "{(}")
-            .replace(")", "{)}")
-        )
+    def send_keys(
+        win: WindowSpecification,
+        keystrokes: str,
+        pause: float = 0.05,
+        spaces: bool = False,
+    ) -> None:
+        focus(win)
+        keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
 
-    if cls:
-        keystrokes = "{DELETE}" + keystrokes
+    def click_type(
+        win: WindowSpecification,
+        element: UiaElement,
+        keystrokes: str,
+        delay: float = 0.1,
+        pause: float = 0.05,
+        double: bool = False,
+        cls: bool = True,
+        ent: bool = False,
+        spaces: bool = False,
+        escape_chars: bool = False,
+        coords: tuple[int, int] | None = None,
+    ) -> None:
+        focus(win)
 
-    if ent:
-        keystrokes = keystrokes + "{ENTER}+{TAB}"
+        if escape_chars:
+            keystrokes = (
+                keystrokes.replace("\n", "{ENTER}")
+                .replace("(", "{(}")
+                .replace(")", "{)}")
+            )
 
-    if not coords:
-        coords = (None, None)
+        if cls:
+            keystrokes = "{DELETE}" + keystrokes
 
-    if double:
-        element.double_click_input(coords=coords)
-    else:
-        element.click_input(coords=coords)
-    sleep(delay)
-    keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
+        if ent:
+            keystrokes = keystrokes + "{ENTER}+{TAB}"
+
+        if not coords:
+            coords = (None, None)
+
+        if double:
+            element.double_click_input(coords=coords)
+        else:
+            element.click_input(coords=coords)
+        sleep(delay)
+        keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
+else:
+
+    def click(
+        _: WindowSpecification,
+        element: UiaElement,
+        button: Literal["left", "right", "middle"] = "left",
+        double: bool = False,
+    ) -> None:
+        element.click_input(button=button, double=double)
+
+    def send_keys(
+        _: WindowSpecification,
+        keystrokes: str,
+        pause: float = 0.05,
+        spaces: bool = False,
+    ) -> None:
+        keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
+
+    def click_type(
+        _: WindowSpecification,
+        element: UiaElement,
+        keystrokes: str,
+        delay: float = 0.1,
+        pause: float = 0.05,
+        double: bool = False,
+        cls: bool = True,
+        ent: bool = False,
+        spaces: bool = False,
+        escape_chars: bool = False,
+        coords: tuple[int, int] | None = None,
+    ) -> None:
+        if escape_chars:
+            keystrokes = (
+                keystrokes.replace("\n", "{ENTER}")
+                .replace("(", "{(}")
+                .replace(")", "{)}")
+            )
+
+        if cls:
+            keystrokes = "{DELETE}" + keystrokes
+
+        if ent:
+            keystrokes = keystrokes + "{ENTER}+{TAB}"
+
+        if not coords:
+            coords = (None, None)
+
+        if double:
+            element.double_click_input(coords=coords)
+        else:
+            element.click_input(coords=coords)
+        sleep(delay)
+        keyboard.send_keys(keystrokes, pause=pause, with_spaces=spaces)
 
 
 def check(checkbox: WindowSpecification | CheckBoxWrapper) -> None:
@@ -469,11 +516,6 @@ def print_element_tree(
             raise ValueError("max_depth must be a non-negative integer or None")
 
     _print_element_tree(element=element, max_depth=max_depth)
-
-
-def outline(element: UiaElement) -> None:
-    focus(element)
-    element.draw_outline()
 
 
 def switch_backend(backend: Literal["uia", "win32"]) -> Application:

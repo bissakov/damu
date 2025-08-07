@@ -61,7 +61,7 @@ from sverka.subsidy import Error
 from sverka.subsidy import ParseSubsidyContract, ParseJoinContract
 from utils.my_collections import find, index
 from utils.office import recover_docx
-from utils.utils import compare
+from utils.utils import compare, safe_extract
 
 if TYPE_CHECKING:
     from typing import Any
@@ -936,6 +936,20 @@ class SubsidyParser(Parser):
 
         dfs = self.table_parser.parse_tables(self.contract)
 
+        if len(dfs) > 0 and not (
+            self.contract.contract_start_date
+            and self.contract.contract_end_date
+        ):
+            self.contract.contract_start_date = (
+                dfs[0].at[0, "debt_repayment_date"].date()
+            )
+            logger.info(f"PARSE - {self.contract.contract_start_date=!r}")
+
+            self.contract.contract_end_date = (
+                dfs[0]["debt_repayment_date"].dropna().iloc[-1].date()
+            )
+            logger.info(f"PARSE - {self.contract.contract_end_date=!r}")
+
         return dfs
 
 
@@ -994,20 +1008,39 @@ class JoinParser(Parser):
         return dbz_id, dbz_date
 
     def find_join_protocol_id_loan_amount(self) -> tuple[str, float]:
+        def is_zayavl(name: str) -> bool:
+            return name.endswith("pdf") and "аявл" in name and "rus" in name
+
         from pypdf import PdfReader
 
         document_folder = self.document.file_path.parent
-        pdf_path = next(
-            (
-                f
-                for f in document_folder.iterdir()
-                if (fname := f.name.lower())
-                and fname.endswith("pdf")
-                and "заявлен" in fname
-                and "rus" in fname
-            ),
-            None,
-        )
+
+        pdf_path = None
+        for file_path in cast(list["Path"], document_folder.iterdir()):
+            if pdf_path:
+                break
+
+            fname = file_path.name.lower()
+            if fname.endswith("zip"):
+                archive_folder = file_path.parent / "temp"
+                archive_folder.mkdir(exist_ok=True)
+                safe_extract(
+                    file_path,
+                    archive_folder,
+                    check_format=False,
+                    normalize_name=False,
+                )
+
+                for file_path2 in archive_folder.iterdir():
+                    fname2 = file_path2.name.lower()
+                    if is_zayavl(fname2):
+                        pdf_path = file_path2
+                        break
+
+            if is_zayavl(fname):
+                pdf_path = file_path
+                break
+
         if not pdf_path:
             raise JoinPDFNotFoundError(
                 "PDF файл 'Заявление получателя к договору присоединения' не найден"
@@ -1077,9 +1110,11 @@ class JoinParser(Parser):
                     force_ocr=True,
                 )
 
-            with open(output_txt_path, "r", encoding="utf-8") as f:
+            with open(output_txt_path, "r", encoding="utf-8") as file_path:
                 lines = [
-                    line for l in f.readlines() if (line := l.strip().lower())
+                    line
+                    for l in file_path.readlines()
+                    if (line := l.strip().lower())
                 ]
 
             for idx, line in enumerate(lines):
